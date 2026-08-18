@@ -1,0 +1,20 @@
+import { redirect } from "next/navigation";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import { requireProfile } from "@/lib/auth/session";
+import { getInventory, getInventoryTotals } from "@/lib/services/inventory";
+import { sql } from "@/lib/db";
+import { formatNumber } from "@/lib/utils";
+
+export default async function InventoryPage() {
+  const profile = await requireProfile();
+  if (profile.role === "supplier") redirect("/dashboard");
+  const allRows = await getInventory();
+  const totals = ["foreman","supervisor","worker"].includes(profile.role) ? [] : await getInventoryTotals();
+  let rows = allRows;
+  if (["foreman","supervisor","worker"].includes(profile.role)) {
+    const [g] = profile.group_id ? await sql`SELECT 'GRP-'||code AS point_code FROM work_groups WHERE id=${profile.group_id}::uuid` : [];
+    rows = g ? rows.filter((x)=>x.point_code===g.point_code) : [];
+  }
+  return <div className="grid gap-5"><div><h1 className="font-display m-0 text-2xl text-[var(--brand-deep)]">Tồn khí & vỏ chai</h1><p className="mt-1 text-sm text-[var(--muted-foreground)]">Kho Hậu cần tách đầy/rỗng; các nhóm chỉ theo dõi tổng số chai đang quản lý.</p></div>{totals.length ? <Card><h2 className="m-0 text-base font-extrabold">Tổng chai/bồn NCC đang được Nhà máy quản lý</h2><p className="mt-1 text-xs text-[var(--muted-foreground)]">Tổng = Kho + các nhóm (gồm Nhóm Cối/Mỏ) + đang vận chuyển.</p><div className="mt-4 overflow-x-auto"><table className="mobile-card-table w-full text-sm"><thead><tr className="text-left text-xs text-[var(--muted-foreground)]"><th className="border-b p-3">Loại</th><th className="border-b p-3">Kho</th><th className="border-b p-3">Các nhóm</th><th className="border-b p-3">Đang vận chuyển</th><th className="border-b p-3">Tổng</th></tr></thead><tbody>{totals.map((t:any)=><tr key={t.product_code}><td data-label="Loại" className="border-b p-3 font-bold">{t.product_name}</td><td data-label="Kho" className="border-b p-3 font-mono-data">{formatNumber(t.warehouse_qty)}</td><td data-label="Các nhóm" className="border-b p-3 font-mono-data">{formatNumber(t.group_qty)}</td><td data-label="Đang vận chuyển" className="border-b p-3 font-mono-data">{formatNumber(t.transit_qty)}</td><td data-label="Tổng" className="border-b p-3 font-mono-data font-extrabold">{formatNumber(t.system_total)} {t.unit}</td></tr>)}</tbody></table></div></Card> : null}<Card className="overflow-hidden p-0"><div className="overflow-x-auto"><table className="mobile-card-table w-full border-collapse text-sm"><thead className="bg-[var(--muted)]"><tr className="text-left text-xs uppercase tracking-wide text-[var(--muted-foreground)]"><th className="p-3">Vị trí / Nhóm</th><th className="p-3">Loại khí</th><th className="p-3">Đầy</th><th className="p-3">Rỗng</th><th className="p-3">Tổng</th><th className="p-3">Ngưỡng</th><th className="p-3">Trạng thái</th></tr></thead><tbody>{rows.map((row)=>{const isWarehouse=row.point_kind==="warehouse";const low=isWarehouse&&row.low_threshold!=null&&Number(row.full_qty)<=Number(row.low_threshold);return <tr key={`${row.point_code}-${row.product_code}`} className="border-t border-[var(--border)]"><td data-label="Vị trí / Nhóm" className="p-3 font-bold">{row.point_name}</td><td data-label="Loại khí" className="p-3">{row.product_name}</td><td data-label="Đầy" className="p-3 font-mono-data">{isWarehouse?formatNumber(row.full_qty):"—"}</td><td data-label="Rỗng" className="p-3 font-mono-data">{isWarehouse?formatNumber(row.empty_qty):"—"}</td><td data-label="Tổng" className="p-3 font-mono-data font-bold">{formatNumber(row.total_qty)}</td><td data-label="Ngưỡng" className="p-3 font-mono-data">{isWarehouse&&row.low_threshold!=null?formatNumber(row.low_threshold):"—"}</td><td data-label="Trạng thái" className="p-3">{isWarehouse?<Badge tone={low?"warning":"success"}>{low?"Tồn thấp":"Bình thường"}</Badge>:<Badge tone="neutral">Đang quản lý</Badge>}</td></tr>})}</tbody></table></div></Card></div>;
+}
