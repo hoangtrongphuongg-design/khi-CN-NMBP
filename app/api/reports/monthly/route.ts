@@ -12,6 +12,10 @@ function styleSheet(ws: ExcelJS.Worksheet) {
   ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: Math.max(1, ws.columnCount) } };
 }
 
+function excelColumns(defs: Array<[string, string, number]>) {
+  return defs.map(([header, key, width]) => ({ header, key, width }));
+}
+
 export async function GET(request: Request) {
   const profile = await requireProfile();
   if (["foreman","supervisor","worker"].includes(profile.role)) return new Response("Forbidden", { status: 403 });
@@ -51,9 +55,9 @@ export async function GET(request: Request) {
     ORDER BY d.delivery_date,d.delivery_code
   `;
   const wsD = wb.addWorksheet("Giao NCC");
-  wsD.columns = [
+  wsD.columns = excelColumns([
     ["Ngày","delivery_date",13],["Phiếu","delivery_code",20],["NCC","supplier",26],["Mã chuyến","trip_code",22],["Điểm giao","destination",24],["Hàng hóa","product",24],["ĐVT","unit",10],["NCC khai","declared_qty",12],["Thực nhận","confirmed_qty",12],["Đơn giá","unit_price",15],["Thành tiền","line_amount",16],["Trạng thái","status",16],
-  ].map(([header,key,width])=>({header,key,width:Number(width)}));
+  ]);
   deliveries.forEach((r:any)=>wsD.addRow(r)); styleSheet(wsD);
   wsD.getColumn("unit_price").numFmt = "#,##0"; wsD.getColumn("line_amount").numFmt = "#,##0";
 
@@ -77,7 +81,7 @@ export async function GET(request: Request) {
     ORDER BY r.return_date,r.return_code
   `;
   const wsR = wb.addWorksheet("Trả vỏ NCC");
-  wsR.columns = [["Ngày","return_date",13],["Phiếu","return_code",20],["Nơi trả","source",24],["Mã chuyến","trip_code",22],["Loại vỏ","product",24],["ĐVT","unit",10],["Khai trả","declared_qty",12],["NCC nhận","confirmed_qty",12],["Trạng thái","status",16]].map(([header,key,width])=>({header,key,width:Number(width)}));
+  wsR.columns = excelColumns([["Ngày","return_date",13],["Phiếu","return_code",20],["Nơi trả","source",24],["Mã chuyến","trip_code",22],["Loại vỏ","product",24],["ĐVT","unit",10],["Khai trả","declared_qty",12],["NCC nhận","confirmed_qty",12],["Trạng thái","status",16]]);
   returns.forEach((r:any)=>wsR.addRow(r)); styleSheet(wsR);
 
   const trips = supplierClause ? await sql`
@@ -94,7 +98,7 @@ export async function GET(request: Request) {
     ORDER BY trip_date,trip_code
   `;
   const wsT = wb.addWorksheet("Chuyến & cước");
-  wsT.columns = [["Ngày","trip_date",13],["Mã chuyến","trip_code",22],["Loại chuyến","trip_kind",16],["Có vào Mỏ","visits_mine",12],["Đơn giá cước","transport_unit_price",16],["Thành tiền","transport_amount",16],["Trạng thái","status",14]].map(([header,key,width])=>({header,key,width:Number(width)}));
+  wsT.columns = excelColumns([["Ngày","trip_date",13],["Mã chuyến","trip_code",22],["Loại chuyến","trip_kind",16],["Có vào Mỏ","visits_mine",12],["Đơn giá cước","transport_unit_price",16],["Thành tiền","transport_amount",16],["Trạng thái","status",14]]);
   trips.forEach((r:any)=>wsT.addRow(r)); styleSheet(wsT); wsT.getColumn("transport_unit_price").numFmt="#,##0"; wsT.getColumn("transport_amount").numFmt="#,##0";
 
   const xl45 = await sql`
@@ -164,7 +168,7 @@ export async function GET(request: Request) {
       ORDER BY v.point_kind,v.point_name,v.product_name
     `;
     const wsI = wb.addWorksheet("Tồn hiện tại");
-    wsI.columns = [["Vị trí/Nhóm","point_name",26],["Loại","product_name",24],["ĐVT","unit",10],["Đầy","full_qty",12],["Rỗng","empty_qty",12],["Tổng","total_qty",12],["Ngưỡng","low_threshold",12]].map(([header,key,width])=>({header,key,width:Number(width)}));
+    wsI.columns = excelColumns([["Vị trí/Nhóm","point_name",26],["Loại","product_name",24],["ĐVT","unit",10],["Đầy","full_qty",12],["Rỗng","empty_qty",12],["Tổng","total_qty",12],["Ngưỡng","low_threshold",12]]);
     inv.forEach((r:any)=>wsI.addRow(r)); styleSheet(wsI);
 
     const internal = await sql`
@@ -177,7 +181,7 @@ export async function GET(request: Request) {
       ORDER BY ir.requested_at
     `;
     const wsN = wb.addWorksheet("Nội bộ");
-    wsN.columns = [["Ngày","date",13],["Phiếu","request_code",20],["Loại phiếu","request_type",14],["Nhóm","group_name",22],["Khí","product",22],["ĐVT","unit",9],["Yêu cầu","requested_qty",12],["Thực tế","actual_qty",12],["Trạng thái","status",18],["Ghi chú","note",28]].map(([header,key,width])=>({header,key,width:Number(width)}));
+    wsN.columns = excelColumns([["Ngày","date",13],["Phiếu","request_code",20],["Loại phiếu","request_type",14],["Nhóm","group_name",22],["Khí","product",22],["ĐVT","unit",9],["Yêu cầu","requested_qty",12],["Thực tế","actual_qty",12],["Trạng thái","status",18],["Ghi chú","note",28]]);
     internal.forEach((r:any)=>wsN.addRow(r)); styleSheet(wsN);
 
     const transfers = await sql`
@@ -189,11 +193,11 @@ export async function GET(request: Request) {
       ORDER BY t.transfer_date
     `;
     const wsX = wb.addWorksheet("Điều chuyển");
-    wsX.columns = [["Ngày","transfer_date",13],["Phiếu","transfer_code",20],["Chiều","direction",20],["Khí","product",22],["ĐVT","unit",9],["Xuất","quantity",12],["Nhận","received_qty",12],["Trạng thái","status",18],["Ghi chú","note",28]].map(([header,key,width])=>({header,key,width:Number(width)}));
+    wsX.columns = excelColumns([["Ngày","transfer_date",13],["Phiếu","transfer_code",20],["Chiều","direction",20],["Khí","product",22],["ĐVT","unit",9],["Xuất","quantity",12],["Nhận","received_qty",12],["Trạng thái","status",18],["Ghi chú","note",28]]);
     transfers.forEach((r:any)=>wsX.addRow(r)); styleSheet(wsX);
 
     const ws45 = wb.addWorksheet("XL45 - phí lưu bồn");
-    ws45.columns = [["Ngày trả","return_date",13],["Sản phẩm","product",24],["Địa điểm","location",24],["Ngày giao","delivered_date",13],["SL bồn","quantity",10],["Ngày tính phí","charge_days",14],["Phí","rental_amount",16]].map(([header,key,width])=>({header,key,width:Number(width)}));
+    ws45.columns = excelColumns([["Ngày trả","return_date",13],["Sản phẩm","product",24],["Địa điểm","location",24],["Ngày giao","delivered_date",13],["SL bồn","quantity",10],["Ngày tính phí","charge_days",14],["Phí","rental_amount",16]]);
     xl45.forEach((r:any)=>ws45.addRow(r)); styleSheet(ws45); ws45.getColumn("rental_amount").numFmt="# ##0";
   }
 
