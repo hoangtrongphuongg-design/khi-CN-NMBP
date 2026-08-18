@@ -12,6 +12,7 @@ function assertAdmin(profile: Profile) {
 export async function listUsers() {
   return sql`
     SELECT u.id,u.username,u.full_name,u.role,u.email,u.active,u.must_change_password,u.created_at,
+      u.group_id,u.location_id,u.organization_id,
       g.name AS group_name,l.name AS location_name,o.name AS organization_name
     FROM users u
     LEFT JOIN work_groups g ON g.id=u.group_id
@@ -47,6 +48,55 @@ export async function createUser(profile: Profile, input: {
   `;
   await audit({ actorUserId: profile.id, action: "create", entityType: "user", entityId: row.id, after: { ...input, password: "***" } });
   return row.id as string;
+}
+
+export async function updateUser(profile: Profile, userId: string, input: {
+  fullName: string; role: AppRole;
+  groupId?: string | null; locationId?: string | null; organizationId?: string | null; email?: string | null;
+}) {
+  assertAdmin(profile);
+  if (!userId || !input.fullName.trim()) throw new Error("Thiếu thông tin tài khoản");
+  if (profile.id === userId && input.role !== "admin") throw new Error("Không thể tự bỏ quyền Admin của tài khoản đang đăng nhập");
+  if (["foreman","supervisor","worker"].includes(input.role) && !input.groupId) throw new Error("Đốc công/Giám sát/Công nhân phải gắn với một nhóm");
+  if (input.role === "supplier" && !input.organizationId) throw new Error("Tài khoản NCC phải gắn với nhà cung cấp");
+
+  let locationId = input.locationId || null;
+  if (input.role === "mine_xsc") {
+    const [mine] = await sql`SELECT id FROM locations WHERE code='MINE' LIMIT 1`;
+    locationId = mine?.id || null;
+  } else if (!locationId && ["workshop","warehouse_manager","storekeeper","management_board","admin"].includes(input.role)) {
+    const [plant] = await sql`SELECT id FROM locations WHERE code='PLANT' LIMIT 1`;
+    locationId = plant?.id || null;
+  }
+
+  const [before] = await sql`
+    SELECT username,full_name,role,group_id,location_id,organization_id,email,active
+    FROM users WHERE id=${userId}::uuid LIMIT 1
+  `;
+  if (!before) throw new Error("Không tìm thấy tài khoản");
+
+  await sql`
+    UPDATE users SET
+      full_name=${input.fullName.trim()},
+      role=${input.role},
+      group_id=${input.groupId || null}::uuid,
+      location_id=${locationId}::uuid,
+      organization_id=${input.organizationId || null}::uuid,
+      email=${input.email || null},
+      session_version=session_version+1,
+      updated_at=now()
+    WHERE id=${userId}::uuid
+  `;
+  await sql`DELETE FROM user_sessions WHERE user_id=${userId}::uuid`;
+  await audit({
+    actorUserId: profile.id,
+    action: "update",
+    entityType: "user",
+    entityId: userId,
+    before,
+    after: { fullName: input.fullName.trim(), role: input.role, groupId: input.groupId || null, locationId, organizationId: input.organizationId || null, email: input.email || null },
+    note: "Thay đổi thông tin/phân quyền user; session cũ đã bị vô hiệu"
+  });
 }
 
 export async function resetPassword(profile: Profile, userId: string, password: string) {

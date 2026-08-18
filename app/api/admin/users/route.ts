@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireProfile } from "@/lib/auth/session";
-import { createUser, resetPassword, setUserActive } from "@/lib/services/admin";
+import { createUser, resetPassword, setUserActive, updateUser } from "@/lib/services/admin";
 import type { AppRole } from "@/types/app";
 
 export async function POST(request: Request) {
@@ -13,6 +13,15 @@ export async function POST(request: Request) {
         username: String(form.get("username") || ""),
         fullName: String(form.get("full_name") || ""),
         password: String(form.get("password") || ""),
+        role: String(form.get("role") || "worker") as AppRole,
+        groupId: String(form.get("group_id") || "") || null,
+        locationId: String(form.get("location_id") || "") || null,
+        organizationId: String(form.get("organization_id") || "") || null,
+        email: String(form.get("email") || "") || null,
+      });
+    } else if (action === "update") {
+      await updateUser(profile, String(form.get("user_id") || ""), {
+        fullName: String(form.get("full_name") || ""),
         role: String(form.get("role") || "worker") as AppRole,
         groupId: String(form.get("group_id") || "") || null,
         locationId: String(form.get("location_id") || "") || null,
