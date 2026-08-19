@@ -44,12 +44,13 @@ export async function getCurrentProfile(): Promise<Profile | null> {
   const rows = await sql<Profile[]>`
     SELECT
       u.id,u.username,u.full_name,u.role,u.group_id,COALESCE(u.location_id,g.location_id) AS location_id,u.organization_id,u.active,u.must_change_password,
-      g.name AS group_name,COALESCE(l.code,gl.code) AS location_code
+      g.name AS group_name,COALESCE(l.code,gl.code) AS location_code,o.name AS organization_name
     FROM user_sessions s
     JOIN users u ON u.id=s.user_id
     LEFT JOIN work_groups g ON g.id=u.group_id
     LEFT JOIN locations l ON l.id=u.location_id
     LEFT JOIN locations gl ON gl.id=g.location_id
+    LEFT JOIN organizations o ON o.id=u.organization_id
     WHERE s.token_hash=${hashToken(token)}
       AND s.expires_at>now()
       AND s.session_version=u.session_version

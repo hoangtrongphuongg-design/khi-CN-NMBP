@@ -20,6 +20,7 @@ export type Profile = {
   location_id: string | null;
   location_code?: string | null;
   organization_id: string | null;
+  organization_name?: string | null;
   active: boolean;
   must_change_password?: boolean;
 };
