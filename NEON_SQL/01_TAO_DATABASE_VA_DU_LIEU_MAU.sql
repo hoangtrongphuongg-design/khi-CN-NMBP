@@ -285,6 +285,20 @@ CREATE TABLE IF NOT EXISTS internal_requests (
 CREATE INDEX IF NOT EXISTS internal_requests_status_idx ON internal_requests(status, requested_at DESC);
 CREATE INDEX IF NOT EXISTS internal_requests_group_idx ON internal_requests(group_id, requested_at DESC);
 
+CREATE TABLE IF NOT EXISTS internal_request_items (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  internal_request_id uuid NOT NULL REFERENCES internal_requests(id) ON DELETE CASCADE,
+  product_id uuid NOT NULL REFERENCES products(id),
+  requested_qty numeric(14,3) NOT NULL CHECK (requested_qty > 0),
+  actual_qty numeric(14,3) CHECK (actual_qty >= 0),
+  return_bucket text CHECK (return_bucket IN ('full','empty')),
+  line_status text NOT NULL DEFAULT 'pending' CHECK (line_status IN ('pending','executed')),
+  executed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(internal_request_id, product_id)
+);
+CREATE INDEX IF NOT EXISTS internal_request_items_request_idx ON internal_request_items(internal_request_id, created_at);
+
 CREATE TABLE IF NOT EXISTS transfers (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   transfer_code text NOT NULL UNIQUE,

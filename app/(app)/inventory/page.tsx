@@ -8,6 +8,7 @@ import {
   Search,
   UsersRound,
   Warehouse,
+  Bottle,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -15,6 +16,7 @@ import { requireProfile } from "@/lib/auth/session";
 import { getInventory, getInventoryTotals } from "@/lib/services/inventory";
 import { sql } from "@/lib/db";
 import { formatNumber } from "@/lib/utils";
+import { getGroupQuickData } from "@/lib/services/internal";
 import type { InventoryRow } from "@/types/app";
 
 type SearchParams = Promise<{
@@ -184,9 +186,13 @@ export default async function InventoryPage({ searchParams }: { searchParams: Se
   };
 
   if (limitedRole) {
+    const quick = await getGroupQuickData(profile);
+    const groupRows = quick.filter((x:any) => Number(x.groupQty) > 0);
+    const warehouseQuick = quick.filter((x:any) => Number(x.warehouseFull) > 0 || Number(x.warehouseEmpty) > 0);
     return <div className="grid gap-5">
-      <div><h1 className="font-display m-0 text-2xl text-[var(--brand-deep)]">Tồn khí của nhóm</h1><p className="mt-1 text-sm text-[var(--muted-foreground)]">Theo dõi số chai nhóm đang quản lý theo từng loại khí.</p></div>
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{filteredRows.filter((r) => Number(r.total_qty) > 0).map((row) => <Card key={`${row.point_code}-${row.product_code}`} className="flex items-center justify-between gap-4"><div><div className="text-xs font-bold text-[var(--muted-foreground)]">{row.product_name}</div><div className="mt-2 text-3xl font-extrabold text-[var(--brand-deep)]">{formatNumber(row.total_qty)} <span className="text-sm font-bold text-[var(--muted-foreground)]">{row.unit}</span></div></div><div className={`flex h-12 w-12 items-center justify-center rounded-full text-xs font-extrabold text-white ${productAccent(row.product_code)}`}>{productMark(row.product_code)}</div></Card>)}</div>
+      <div><h1 className="font-display m-0 text-2xl text-[var(--brand-deep)]">Tồn khí</h1><p className="mt-1 text-sm text-[var(--muted-foreground)]">Chỉ hiển thị những loại khí đang có số liệu.</p></div>
+      <Card><div className="mb-4 flex items-center gap-2"><Bottle size={19} className="text-[var(--brand)]"/><h2 className="m-0 text-lg font-extrabold">Số chai tại nhóm</h2></div>{groupRows.length ? <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{groupRows.map((row:any) => <div key={row.id} className="rounded-xl border border-[var(--border)] p-4"><div className="text-sm font-bold">{row.name}</div><div className="font-mono-data mt-2 text-3xl font-extrabold text-[var(--brand-deep)]">{formatNumber(row.groupQty)} <span className="font-sans text-sm text-[var(--muted-foreground)]">{row.unit}</span></div></div>)}</div> : <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--paper)] p-4 text-sm text-[var(--muted-foreground)]">Nhóm hiện chưa có chai khí.</div>}</Card>
+      <Card><div className="mb-4 flex items-center gap-2"><Warehouse size={19} className="text-[var(--brand)]"/><h2 className="m-0 text-lg font-extrabold">Tồn Kho Hậu cần</h2></div>{warehouseQuick.length ? <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">{warehouseQuick.map((row:any)=><div key={row.id} className="grid grid-cols-[1fr_auto_auto] items-center gap-3 rounded-xl border border-[var(--border)] p-3"><strong>{row.name}</strong><div className="min-w-16 text-center"><div className="text-[11px] font-bold uppercase text-[var(--success)]">Đầy</div><div className="font-mono-data text-xl font-extrabold text-[var(--success)]">{formatNumber(row.warehouseFull)}</div></div><div className="min-w-16 border-l border-[var(--border)] pl-3 text-center"><div className="text-[11px] font-bold uppercase text-[var(--muted-foreground)]">Rỗng</div><div className="font-mono-data text-xl font-extrabold">{formatNumber(row.warehouseEmpty)}</div></div></div>)}</div> : <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--paper)] p-4 text-sm text-[var(--muted-foreground)]">Kho hiện chưa có số liệu chai đầy/rỗng.</div>}</Card>
     </div>;
   }
 

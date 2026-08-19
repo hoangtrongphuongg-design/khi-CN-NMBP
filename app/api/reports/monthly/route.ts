@@ -239,13 +239,17 @@ export async function GET(request: Request) {
     inv.forEach((r:any)=>wsI.addRow(r)); styleSheet(wsI);
 
     const internal = await sql`
-      SELECT ir.requested_at::date AS date,ir.request_code,ir.request_type,g.name AS group_name,p.name AS product,p.unit,ir.requested_qty::float8,ir.actual_qty::float8,ir.status,ir.note
-      FROM internal_requests ir JOIN work_groups g ON g.id=ir.group_id JOIN products p ON p.id=ir.product_id
+      SELECT ir.requested_at::date AS date,ir.request_code,ir.request_type,g.name AS group_name,p.name AS product,p.unit,
+        iri.requested_qty::float8 AS requested_qty,iri.actual_qty::float8 AS actual_qty,ir.status,ir.note
+      FROM internal_requests ir
+      JOIN internal_request_items iri ON iri.internal_request_id=ir.id
+      JOIN work_groups g ON g.id=ir.group_id
+      JOIN products p ON p.id=iri.product_id
       WHERE ir.requested_at>=${start}::date AND ir.requested_at<${endDate}::date
-        AND (${productId}::uuid IS NULL OR ir.product_id=${productId}::uuid)
+        AND (${productId}::uuid IS NULL OR iri.product_id=${productId}::uuid)
         AND (${groupId}::uuid IS NULL OR ir.group_id=${groupId}::uuid)
         AND (${statusFilter}::text IS NULL OR ir.status=${statusFilter})
-      ORDER BY ir.requested_at
+      ORDER BY ir.requested_at,ir.request_code,p.display_order,p.name
     `;
     const wsN = wb.addWorksheet("Nội bộ");
     wsN.columns = excelColumns([["Ngày","date",13],["Phiếu","request_code",20],["Loại phiếu","request_type",14],["Nhóm","group_name",22],["Khí","product",22],["ĐVT","unit",9],["Yêu cầu","requested_qty",12],["Thực tế","actual_qty",12],["Trạng thái","status",18],["Ghi chú","note",28]]);

@@ -381,3 +381,11 @@ Khi giao dịch chốt, hệ thống lưu snapshot:
 8. Kiểm tra Excel.
 9. Kiểm tra email.
 10. Sau khi đúng mới nhập tồn đầu kỳ thật.
+
+## Migration V1.0.15
+
+Database đang chạy V1.0.14 cần chạy thêm đúng một file:
+
+`NEON_SQL/08_PHIEU_NOI_BO_NHIEU_LOAI_KHI.sql`
+
+Migration này không xóa dữ liệu cũ; các phiếu nội bộ cũ 1 loại khí được tự tạo thành 1 dòng chi tiết tương ứng.

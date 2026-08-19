@@ -32,6 +32,8 @@
   --danger: #b91c1c;
   --success: #15803d;
   --neutral: #4b5563;
+  --action-borrow: #15803d;
+  --action-return: #f97316;
   --focus-ring: rgba(0, 74, 143, 0.24);
 }
 
@@ -103,3 +105,29 @@ a { color: inherit; text-decoration: none; }
 .status-danger { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, white); border-color: color-mix(in srgb, var(--danger) 25%, white); }
 .status-success { color: var(--success); background: color-mix(in srgb, var(--success) 10%, white); border-color: color-mix(in srgb, var(--success) 25%, white); }
 .status-neutral { color: var(--neutral); background: color-mix(in srgb, var(--neutral) 10%, white); border-color: color-mix(in srgb, var(--neutral) 25%, white); }
+
+
+.group-hero {
+  background: linear-gradient(135deg, var(--brand-deep), var(--brand));
+}
+.group-action {
+  display: flex;
+  min-height: 64px;
+  align-items: center;
+  justify-content: center;
+  gap: .55rem;
+  border: 0;
+  border-radius: 1rem;
+  color: white;
+  font-size: 1rem;
+  font-weight: 800;
+  transition: transform .15s ease, filter .15s ease;
+}
+.group-action:hover { filter: brightness(.96); }
+.group-action:active { transform: scale(.98); }
+.group-action.exchange { background: var(--brand); }
+.group-action.borrow { background: var(--action-borrow); }
+.group-action.return { background: var(--action-return); }
+@media (max-width: 420px) {
+  .group-action { min-height: 60px; font-size: .95rem; }
+}

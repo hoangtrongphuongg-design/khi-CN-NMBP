@@ -77,3 +77,13 @@ Sau đó mở:
 
 Sau khi web chạy ổn mới cấu hình SMTP trong Vercel.
 Không cần làm ở lần Deploy đầu.
+
+## Cập nhật V1.0.15 từ V1.0.14
+
+1. Upload các file trong PATCH V1.0.15 lên GitHub và ghi đè đúng đường dẫn.
+2. Chờ Vercel deploy xong.
+3. Vào Neon → SQL Editor.
+4. Mở file `NEON_SQL/08_PHIEU_NOI_BO_NHIEU_LOAI_KHI.sql`, copy toàn bộ và bấm **Run** một lần.
+5. Đăng nhập lại và thử: Đốc công/Giám sát → Tổng quan → Đổi/Mượn/Trả → thêm 2–3 loại khí → gửi yêu cầu → Thủ kho nhập số thực tế từng dòng.
+
+Không chạy lại SQL 01–07 khi chỉ cập nhật bản này.

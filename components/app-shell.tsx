@@ -3,6 +3,7 @@ import Image from "next/image";
 import { LayoutDashboard, Boxes, Truck, Repeat2, ArrowLeftRight, FileSpreadsheet, Settings, LogOut } from "lucide-react";
 import type { Profile } from "@/types/app";
 import { ROLE_LABELS } from "@/lib/auth/permissions";
+import { AppFeedback } from "@/components/app-feedback";
 
 const allNav = [
   { href: "/dashboard", label: "Tổng quan", icon: LayoutDashboard, key: "dashboard" },
@@ -51,6 +52,7 @@ export function AppShell({ profile, children }: { profile: Profile; children: Re
         </header>
         <main className="mx-auto w-full max-w-[1500px] p-4 pb-24 md:p-6 md:pb-8">{children}</main>
       </div>
+      <AppFeedback />
       <nav className={`fixed inset-x-0 bottom-0 z-30 grid border-t border-[var(--border)] bg-white px-1 pb-[env(safe-area-inset-bottom)] md:hidden ${mobileNav.length >= 6 ? "grid-cols-6" : mobileNav.length === 5 ? "grid-cols-5" : mobileNav.length === 4 ? "grid-cols-4" : "grid-cols-3"}`}>
         {mobileNav.map(({ href, label, icon: Icon }) => <Link key={href} href={href} className="flex min-h-16 flex-col items-center justify-center gap-1 px-1 text-[10px] font-bold text-[var(--neutral)]"><Icon size={19} aria-hidden="true" /><span className="max-w-[64px] truncate">{label}</span></Link>)}
       </nav>
