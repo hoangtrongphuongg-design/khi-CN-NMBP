@@ -70,18 +70,18 @@ export async function GET(request: Request) {
   wsD.getColumn("unit_price").numFmt = "#,##0"; wsD.getColumn("line_amount").numFmt = "#,##0";
 
   const returns = supplierClause ? await sql`
-    SELECT r.return_date,r.return_code,l.name AS source,t.trip_code,p.name AS product,p.unit,ri.declared_qty::float8,ri.confirmed_qty::float8,ri.status
+    SELECT r.return_date,r.return_code,l.name AS source,t.trip_code,d.delivery_code,p.name AS product,p.unit,ri.declared_qty::float8,ri.confirmed_qty::float8,ri.status
     FROM supplier_return_items ri JOIN supplier_returns r ON r.id=ri.supplier_return_id JOIN locations l ON l.id=r.source_location_id
-    LEFT JOIN transport_trips t ON t.id=r.trip_id JOIN products p ON p.id=ri.product_id
+    LEFT JOIN transport_trips t ON t.id=r.trip_id LEFT JOIN LATERAL (SELECT sd.delivery_code FROM supplier_deliveries sd WHERE sd.trip_id=r.trip_id ORDER BY sd.created_at LIMIT 1) d ON true JOIN products p ON p.id=ri.product_id
     WHERE r.return_date>=${start}::date AND r.return_date<${endDate}::date AND r.supplier_org_id=${supplierClause}::uuid
       AND (${locationId}::uuid IS NULL OR r.source_location_id=${locationId}::uuid)
       AND (${productId}::uuid IS NULL OR ri.product_id=${productId}::uuid)
       AND (${statusFilter}::text IS NULL OR r.status=${statusFilter})
     ORDER BY r.return_date,r.return_code
   ` : await sql`
-    SELECT r.return_date,r.return_code,l.name AS source,t.trip_code,p.name AS product,p.unit,ri.declared_qty::float8,ri.confirmed_qty::float8,ri.status
+    SELECT r.return_date,r.return_code,l.name AS source,t.trip_code,d.delivery_code,p.name AS product,p.unit,ri.declared_qty::float8,ri.confirmed_qty::float8,ri.status
     FROM supplier_return_items ri JOIN supplier_returns r ON r.id=ri.supplier_return_id JOIN locations l ON l.id=r.source_location_id
-    LEFT JOIN transport_trips t ON t.id=r.trip_id JOIN products p ON p.id=ri.product_id
+    LEFT JOIN transport_trips t ON t.id=r.trip_id LEFT JOIN LATERAL (SELECT sd.delivery_code FROM supplier_deliveries sd WHERE sd.trip_id=r.trip_id ORDER BY sd.created_at LIMIT 1) d ON true JOIN products p ON p.id=ri.product_id
     WHERE r.return_date>=${start}::date AND r.return_date<${endDate}::date
       AND (${locationId}::uuid IS NULL OR r.source_location_id=${locationId}::uuid)
       AND (${productId}::uuid IS NULL OR ri.product_id=${productId}::uuid)
@@ -89,24 +89,28 @@ export async function GET(request: Request) {
     ORDER BY r.return_date,r.return_code
   `;
   const wsR = wb.addWorksheet("Trả vỏ NCC");
-  wsR.columns = excelColumns([["Ngày","return_date",13],["Phiếu","return_code",20],["Nơi trả","source",24],["Mã chuyến","trip_code",22],["Loại vỏ","product",24],["ĐVT","unit",10],["Khai trả","declared_qty",12],["NCC nhận","confirmed_qty",12],["Trạng thái","status",16]]);
+  wsR.columns = excelColumns([["Ngày","return_date",13],["Phiếu trả","return_code",20],["Nơi trả","source",24],["Phiếu giao gốc","delivery_code",20],["Loại vỏ","product",24],["ĐVT","unit",10],["Số lượng trả","declared_qty",14],["Trạng thái","status",16]]);
   returns.forEach((r:any)=>wsR.addRow(r)); styleSheet(wsR);
 
   const trips = supplierClause ? await sql`
-    SELECT trip_date,trip_code,trip_kind,visits_mine,transport_unit_price::float8,transport_amount::float8,status
-    FROM transport_trips t WHERE trip_date>=${start}::date AND trip_date<${endDate}::date AND supplier_org_id=${supplierClause}::uuid
-      AND (${locationId}::uuid IS NULL OR EXISTS (SELECT 1 FROM supplier_deliveries d JOIN supplier_delivery_items di ON di.delivery_id=d.id WHERE d.trip_id=t.id AND di.destination_location_id=${locationId}::uuid) OR EXISTS (SELECT 1 FROM supplier_returns r WHERE r.trip_id=t.id AND r.source_location_id=${locationId}::uuid))
-      AND (${productId}::uuid IS NULL OR EXISTS (SELECT 1 FROM supplier_deliveries d JOIN supplier_delivery_items di ON di.delivery_id=d.id WHERE d.trip_id=t.id AND di.product_id=${productId}::uuid) OR EXISTS (SELECT 1 FROM supplier_returns r JOIN supplier_return_items ri ON ri.supplier_return_id=r.id WHERE r.trip_id=t.id AND ri.product_id=${productId}::uuid))
-    ORDER BY trip_date,trip_code
+    SELECT t.trip_date,t.trip_code,d.delivery_code,t.trip_kind,t.visits_mine,t.transport_unit_price::float8,t.transport_amount::float8,t.status
+    FROM transport_trips t
+    JOIN supplier_deliveries d ON d.trip_id=t.id AND d.status='completed'
+    WHERE t.status='completed' AND t.trip_date>=${start}::date AND t.trip_date<${endDate}::date AND t.supplier_org_id=${supplierClause}::uuid
+      AND (${locationId}::uuid IS NULL OR EXISTS (SELECT 1 FROM supplier_delivery_items di WHERE di.delivery_id=d.id AND di.destination_location_id=${locationId}::uuid))
+      AND (${productId}::uuid IS NULL OR EXISTS (SELECT 1 FROM supplier_delivery_items di WHERE di.delivery_id=d.id AND di.product_id=${productId}::uuid))
+    ORDER BY t.trip_date,d.delivery_code
   ` : await sql`
-    SELECT trip_date,trip_code,trip_kind,visits_mine,transport_unit_price::float8,transport_amount::float8,status
-    FROM transport_trips t WHERE trip_date>=${start}::date AND trip_date<${endDate}::date
-      AND (${locationId}::uuid IS NULL OR EXISTS (SELECT 1 FROM supplier_deliveries d JOIN supplier_delivery_items di ON di.delivery_id=d.id WHERE d.trip_id=t.id AND di.destination_location_id=${locationId}::uuid) OR EXISTS (SELECT 1 FROM supplier_returns r WHERE r.trip_id=t.id AND r.source_location_id=${locationId}::uuid))
-      AND (${productId}::uuid IS NULL OR EXISTS (SELECT 1 FROM supplier_deliveries d JOIN supplier_delivery_items di ON di.delivery_id=d.id WHERE d.trip_id=t.id AND di.product_id=${productId}::uuid) OR EXISTS (SELECT 1 FROM supplier_returns r JOIN supplier_return_items ri ON ri.supplier_return_id=r.id WHERE r.trip_id=t.id AND ri.product_id=${productId}::uuid))
-    ORDER BY trip_date,trip_code
+    SELECT t.trip_date,t.trip_code,d.delivery_code,t.trip_kind,t.visits_mine,t.transport_unit_price::float8,t.transport_amount::float8,t.status
+    FROM transport_trips t
+    JOIN supplier_deliveries d ON d.trip_id=t.id AND d.status='completed'
+    WHERE t.status='completed' AND t.trip_date>=${start}::date AND t.trip_date<${endDate}::date
+      AND (${locationId}::uuid IS NULL OR EXISTS (SELECT 1 FROM supplier_delivery_items di WHERE di.delivery_id=d.id AND di.destination_location_id=${locationId}::uuid))
+      AND (${productId}::uuid IS NULL OR EXISTS (SELECT 1 FROM supplier_delivery_items di WHERE di.delivery_id=d.id AND di.product_id=${productId}::uuid))
+    ORDER BY t.trip_date,d.delivery_code
   `;
   const wsT = wb.addWorksheet("Chuyến & cước");
-  wsT.columns = excelColumns([["Ngày","trip_date",13],["Mã chuyến","trip_code",22],["Loại chuyến","trip_kind",16],["Có vào Mỏ","visits_mine",12],["Đơn giá cước","transport_unit_price",16],["Thành tiền","transport_amount",16],["Trạng thái","status",14]]);
+  wsT.columns = excelColumns([["Ngày","trip_date",13],["Phiếu giao / chuyến","delivery_code",22],["Loại cước","trip_kind",16],["Đơn giá cước","transport_unit_price",16],["Thành tiền","transport_amount",16],["Trạng thái","status",14]]);
   trips.forEach((r:any)=>wsT.addRow(r)); styleSheet(wsT); wsT.getColumn("transport_unit_price").numFmt="#,##0"; wsT.getColumn("transport_amount").numFmt="#,##0";
 
   const xl45 = await sql`
@@ -159,8 +163,8 @@ export async function GET(request: Request) {
   ]);
   goodsCostDetails.forEach((r)=>wsGoodsCost.addRow(r));
   styleSheet(wsGoodsCost);
-  wsGoodsCost.getColumn("unit_price").numFmt="#,#00";
-  wsGoodsCost.getColumn("amount").numFmt="#,#00";
+  wsGoodsCost.getColumn("unit_price").numFmt="#,##0";
+  wsGoodsCost.getColumn("amount").numFmt="#,##0";
 
   const wsGoodsSummary = wb.addWorksheet("Mua khí - Tổng hợp");
   wsGoodsSummary.columns = excelColumns([
@@ -169,9 +173,9 @@ export async function GET(request: Request) {
   ]);
   goodsCostSummary.forEach((r)=>wsGoodsSummary.addRow(r));
   styleSheet(wsGoodsSummary);
-  wsGoodsSummary.getColumn("min_unit_price").numFmt="#,#00";
-  wsGoodsSummary.getColumn("max_unit_price").numFmt="#,#00";
-  wsGoodsSummary.getColumn("amount").numFmt="#,#00";
+  wsGoodsSummary.getColumn("min_unit_price").numFmt="#,##0";
+  wsGoodsSummary.getColumn("max_unit_price").numFmt="#,##0";
+  wsGoodsSummary.getColumn("amount").numFmt="#,##0";
 
   const wsRentSummary = wb.addWorksheet("Thuê vỏ - Tổng hợp");
   wsRentSummary.columns = excelColumns([
@@ -215,14 +219,14 @@ export async function GET(request: Request) {
   ]);
   xl45RentalDaily.forEach((r)=>wsXL45Daily.addRow(r));
   styleSheet(wsXL45Daily);
-  wsXL45Daily.getColumn("unit_price").numFmt="#,#00";
-  wsXL45Daily.getColumn("rental_amount").numFmt="#,#00";
+  wsXL45Daily.getColumn("unit_price").numFmt="#,##0";
+  wsXL45Daily.getColumn("rental_amount").numFmt="#,##0";
 
   const wsXL45Summary = wb.addWorksheet("XL45 - Tổng hợp");
   wsXL45Summary.columns = excelColumns([["Loại bồn","product_name",24],["Mã","product_code",12],["Bồn-ngày tính phí","bon_days",20],["Thành tiền","amount",18]]);
   xl45RentalSummary.forEach((r)=>wsXL45Summary.addRow(r));
   styleSheet(wsXL45Summary);
-  wsXL45Summary.getColumn("amount").numFmt="#,#00";
+  wsXL45Summary.getColumn("amount").numFmt="#,##0";
 
   if (profile.role !== "supplier") {
     const inv = await sql`

@@ -337,6 +337,7 @@ export function summarizeGoodsCost(rows: GoodsCostDetail[]): GoodsCostSummary[] 
 export type TransportCostRow = {
   trip_date: string;
   trip_code: string;
+  delivery_code: string;
   trip_kind: string;
   visits_mine: boolean;
   unit_price: number;
@@ -352,23 +353,23 @@ export async function getTransportCostDetails(params: {
 }): Promise<TransportCostRow[]> {
   if (params.endDateExclusive <= params.startDate) return [] as TransportCostRow[];
   const rows = await sql`
-    SELECT trip_date,trip_code,trip_kind,visits_mine,
-      transport_unit_price::float8 AS unit_price,transport_amount::float8 AS amount
-    FROM transport_trips
-    WHERE status='completed'
-      AND trip_date>=${params.startDate}::date AND trip_date<${params.endDateExclusive}::date
-      AND (${params.supplierOrgId ?? null}::uuid IS NULL OR supplier_org_id=${params.supplierOrgId ?? null}::uuid)
+    SELECT t.trip_date,t.trip_code,d.delivery_code,t.trip_kind,t.visits_mine,
+      t.transport_unit_price::float8 AS unit_price,t.transport_amount::float8 AS amount
+    FROM transport_trips t
+    JOIN supplier_deliveries d ON d.trip_id=t.id AND d.status='completed'
+    WHERE t.status='completed'
+      AND t.trip_date>=${params.startDate}::date AND t.trip_date<${params.endDateExclusive}::date
+      AND (${params.supplierOrgId ?? null}::uuid IS NULL OR t.supplier_org_id=${params.supplierOrgId ?? null}::uuid)
       AND (${params.locationId ?? null}::uuid IS NULL
-        OR EXISTS (SELECT 1 FROM supplier_deliveries d JOIN supplier_delivery_items di ON di.delivery_id=d.id WHERE d.trip_id=transport_trips.id AND di.destination_location_id=${params.locationId ?? null}::uuid)
-        OR EXISTS (SELECT 1 FROM supplier_returns r WHERE r.trip_id=transport_trips.id AND r.source_location_id=${params.locationId ?? null}::uuid))
+        OR EXISTS (SELECT 1 FROM supplier_delivery_items di WHERE di.delivery_id=d.id AND di.destination_location_id=${params.locationId ?? null}::uuid))
       AND (${params.productId ?? null}::uuid IS NULL
-        OR EXISTS (SELECT 1 FROM supplier_deliveries d JOIN supplier_delivery_items di ON di.delivery_id=d.id WHERE d.trip_id=transport_trips.id AND di.product_id=${params.productId ?? null}::uuid)
-        OR EXISTS (SELECT 1 FROM supplier_returns r JOIN supplier_return_items ri ON ri.supplier_return_id=r.id WHERE r.trip_id=transport_trips.id AND ri.product_id=${params.productId ?? null}::uuid))
-    ORDER BY trip_date DESC,trip_code DESC
+        OR EXISTS (SELECT 1 FROM supplier_delivery_items di WHERE di.delivery_id=d.id AND di.product_id=${params.productId ?? null}::uuid))
+    ORDER BY t.trip_date DESC,d.delivery_code DESC
   `;
   return rows.map((r: any): TransportCostRow => ({
     trip_date: toDateKey(r.trip_date),
     trip_code: String(r.trip_code),
+    delivery_code: String(r.delivery_code),
     trip_kind: String(r.trip_kind),
     visits_mine: Boolean(r.visits_mine),
     unit_price: Number(r.unit_price ?? 0),

@@ -17,27 +17,34 @@ function stamp(prefix: string, id: string, date: string) {
   return `${prefix}-${date.replaceAll("-", "")}-${id.slice(0, 6).toUpperCase()}`;
 }
 
-export async function createSupplierDelivery(profile: Profile, input: { deliveryDate: string; lines: DeliveryLineInput[]; note?: string; visitsMine?: boolean; co2LiquidSpecial?: boolean }) {
+export async function createSupplierDelivery(profile: Profile, input: { deliveryDate: string; lines: DeliveryLineInput[]; note?: string }) {
   if (profile.role !== "supplier") throw new Error("Chỉ NCC được tạo Phiếu giao hàng");
   if (!profile.organization_id) throw new Error("Tài khoản NCC chưa gắn nhà cung cấp");
   const supplierId = profile.organization_id;
   const lines = input.lines.filter((x) => x.productId && x.destinationLocationId && Number(x.quantity) > 0);
   if (!lines.length) throw new Error("Phiếu giao phải có ít nhất một dòng hàng");
+  if (new Set(lines.map((x) => x.productId)).size !== lines.length) throw new Error("Mỗi loại khí chỉ nhập một dòng trong cùng Phiếu giao");
+  const destinationIds = Array.from(new Set(lines.map((x) => x.destinationLocationId)));
+  if (destinationIds.length !== 1) throw new Error("Một Phiếu giao chỉ được chọn một địa điểm. Nếu xe quay về rồi giao chuyến khác, hãy tạo Phiếu giao thứ hai.");
 
   return sql.begin(async (tx) => {
-    const destinationRows = await tx`SELECT id,code FROM locations WHERE id IN ${tx(lines.map((x) => x.destinationLocationId))}`;
-    const mineLocation = destinationRows.some((x: any) => x.code === "MINE");
-    const plantLocation = destinationRows.some((x: any) => x.code === "PLANT");
-    const productRows = await tx`SELECT id,code FROM products WHERE id IN ${tx(lines.map((x) => x.productId))}`;
-    const co2Special = Boolean(input.co2LiquidSpecial || productRows.some((x: any) => x.code === "LIQ-CO2"));
-    const visitsMine = Boolean(input.visitsMine || mineLocation);
+    const [destination] = await tx`SELECT id,code,name FROM locations WHERE id=${destinationIds[0]}::uuid AND active=true`;
+    if (!destination || !["PLANT", "MINE"].includes(destination.code)) throw new Error("Địa điểm giao không hợp lệ");
+
+    const productRows = await tx`SELECT id,code FROM products WHERE id IN ${tx(lines.map((x) => x.productId))} AND active=true`;
+    if (productRows.length !== lines.length) throw new Error("Có loại khí không còn hoạt động");
+
+    const visitsMine = destination.code === "MINE";
+    const visitsPlant = destination.code === "PLANT";
+    const co2Special = productRows.some((x: any) => x.code === "LIQ-CO2");
     const kind = co2Special ? "co2_liquid" : visitsMine ? "mine" : "plant";
     const price = await resolvePriceRule(tripPriceType(visitsMine, co2Special), input.deliveryDate, null, tx);
     if (!price) throw new Error("Chưa cấu hình đơn giá vận chuyển có hiệu lực cho ngày giao");
 
+    // Nghiệp vụ chính thức: 1 Phiếu giao NCC = 1 chuyến xe = 1 cước.
     const [trip] = await tx`
       INSERT INTO transport_trips(trip_code,trip_date,supplier_org_id,visits_plant,visits_mine,co2_liquid_special,trip_kind,price_rule_id,transport_unit_price,transport_amount,created_by,note)
-      VALUES (('TMP-'||gen_random_uuid()::text),${input.deliveryDate}::date,${supplierId}::uuid,${plantLocation},${visitsMine},${co2Special},${kind},${price.id}::uuid,${Number(price.unit_price)},${Number(price.unit_price)},${profile.id}::uuid,${input.note || null})
+      VALUES (('TMP-'||gen_random_uuid()::text),${input.deliveryDate}::date,${supplierId}::uuid,${visitsPlant},${visitsMine},${co2Special},${kind},${price.id}::uuid,${Number(price.unit_price)},${Number(price.unit_price)},${profile.id}::uuid,${input.note || null})
       RETURNING id
     `;
     const tripCode = stamp("CHUYEN", trip.id, input.deliveryDate);
@@ -53,10 +60,10 @@ export async function createSupplierDelivery(profile: Profile, input: { delivery
     for (const line of lines) {
       await tx`
         INSERT INTO supplier_delivery_items(delivery_id,product_id,destination_location_id,declared_qty)
-        VALUES (${delivery.id}::uuid,${line.productId}::uuid,${line.destinationLocationId}::uuid,${line.quantity})
+        VALUES (${delivery.id}::uuid,${line.productId}::uuid,${destination.id}::uuid,${line.quantity})
       `;
     }
-    await audit({ tx, actorUserId: profile.id, action: "create", entityType: "supplier_delivery", entityId: delivery.id, after: { code, tripCode, lines, visitsMine, co2Special } });
+    await audit({ tx, actorUserId: profile.id, action: "create", entityType: "supplier_delivery", entityId: delivery.id, after: { code, tripCode, location: destination.code, lines, co2Special, transportAmount: Number(price.unit_price) } });
     return { id: delivery.id as string, code, tripId: trip.id as string, tripCode };
   });
 }
@@ -285,7 +292,7 @@ export async function finalizeDeliveryByPhc(profile: Profile, deliveryId: string
 export async function listDeliveries(profile: Profile) {
   const supplierFilter = profile.role === "supplier" && profile.organization_id ? profile.organization_id : null;
   const query = supplierFilter ? sql`
-    SELECT d.id,d.delivery_code,d.delivery_date,d.status,d.note,d.phc_confirmed_at,
+    SELECT d.id,d.delivery_code,d.trip_id,d.delivery_date,d.status,d.note,d.phc_confirmed_at,
       phc.full_name AS phc_confirmed_by_name,
       t.trip_code,t.trip_kind,t.transport_amount::float8 AS transport_amount,o.name AS supplier_name,
       COALESCE(json_agg(json_build_object(
@@ -306,7 +313,7 @@ export async function listDeliveries(profile: Profile) {
     GROUP BY d.id,t.id,o.name,phc.full_name
     ORDER BY d.delivery_date DESC,d.created_at DESC LIMIT 100
   ` : sql`
-    SELECT d.id,d.delivery_code,d.delivery_date,d.status,d.note,d.phc_confirmed_at,
+    SELECT d.id,d.delivery_code,d.trip_id,d.delivery_date,d.status,d.note,d.phc_confirmed_at,
       phc.full_name AS phc_confirmed_by_name,
       t.trip_code,t.trip_kind,t.transport_amount::float8 AS transport_amount,o.name AS supplier_name,
       COALESCE(json_agg(json_build_object(

@@ -254,3 +254,18 @@ Có cơ cấu chi phí, xu hướng, top loại khí, bảng tổng hợp theo l
 - Mọi thao tác quan trọng (Gửi, Lưu, Xác nhận, Duyệt, Hoàn tất, Xóa, Điều chỉnh) hiện modal xác nhận trước khi thực hiện.
 - Sau thao tác hiển thị toast thành công/thất bại rõ ràng.
 - Không dùng chữ tối trên nút nền màu đậm.
+
+## V1.0.22 — Chuyến giao NCC và trả vỏ cùng chuyến
+
+- 1 Phiếu giao NCC = 1 chuyến xe = 1 lần tính cước.
+- Khi NCC tạo Phiếu giao chỉ chọn 1 địa điểm cho toàn phiếu: Nhà máy hoặc Mỏ Tà Thiết; một phiếu có thể có nhiều loại khí.
+- Nếu xe quay về NCC rồi lên lần nữa trong cùng ngày, NCC tạo Phiếu giao thứ hai; hệ thống tính cước thứ hai.
+- Cước lấy theo địa điểm Phiếu giao (CO₂ lỏng chuyên dụng vẫn dùng loại cước chuyên dụng nếu sản phẩm thuộc trường hợp này).
+- Không có nghiệp vụ xe chạy riêng chỉ để lấy vỏ.
+- Phiếu trả vỏ chỉ được tạo từ một Phiếu giao hiện hữu bằng nút **Trả vỏ cùng chuyến**.
+- Hệ thống tự lấy NCC, ngày, địa điểm và chuyến từ Phiếu giao; người dùng chỉ nhập loại vỏ + số lượng và ghi chú nếu cần.
+- Phiếu trả vỏ không tạo transport_trip mới, không thay đổi cước của Phiếu giao và luôn có chi phí vận chuyển tăng thêm = 0.
+- Nhà máy: Workshop/Trưởng kho/Thủ kho thực hiện; số vỏ trả trừ ngay tồn rỗng/available của Kho Hậu cần.
+- Mỏ: XSC Mỏ thực hiện; số vỏ trả trừ ngay tổng số chai Nhóm Cối/Mỏ đang quản lý.
+- NCC không cần xác nhận nhận vỏ. NCC chỉ xem; nếu có sai lệch thì phản hồi. Phản hồi không tự đảo tồn; sai số được xử lý bằng điều chỉnh có lịch sử.
+- Báo cáo cước chỉ lấy các chuyến gắn với Phiếu giao đã PHC hoàn tất. Phiếu trả vỏ không thể tạo thêm cước.

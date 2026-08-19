@@ -1,7 +1,6 @@
 import { sql } from "@/lib/db";
 import type { Profile } from "@/types/app";
 import { applyStockDelta, audit, getStockPointByCode } from "@/lib/stock";
-import { resolvePriceRule, tripPriceType } from "@/lib/pricing";
 import { toDateKey } from "@/lib/utils";
 
 function stamp(prefix: string, id: string, date: string) {
@@ -40,111 +39,151 @@ async function allocateXL45Return(tx: any, supplierReturnItemId: string, product
   if (remaining > 0.000001) throw new Error("Số bồn XL-45 trả vượt số bồn đang lưu theo lịch sử giao nhận");
 }
 
+/**
+ * Trả vỏ NCC chỉ được tạo từ một Phiếu giao đã có.
+ * Phiếu trả dùng lại trip_id, ngày, NCC và địa điểm của Phiếu giao; không tạo chuyến/cước mới.
+ * Người Nhà máy/Mỏ xác nhận là cập nhật tồn ngay; NCC chỉ xem và phản hồi nếu có sai sót.
+ */
 export async function createSupplierReturn(profile: Profile, input: {
-  returnDate: string;
-  sourceLocationId: string;
+  deliveryId: string;
   lines: { productId: string; quantity: number }[];
-  tripId?: string | null;
   note?: string;
 }) {
-  if (!["workshop","warehouse_manager","storekeeper","mine_xsc"].includes(profile.role)) throw new Error("Không có quyền tạo Phiếu trả vỏ NCC");
-  const lines = input.lines.filter((x) => x.productId && x.quantity > 0);
-  if (!lines.length) throw new Error("Phiếu trả phải có ít nhất một dòng");
-  const validProducts = await sql`SELECT id FROM products WHERE id IN ${sql(lines.map((x)=>x.productId))} AND active=true AND returnable_container=true`;
-  if (validProducts.length !== new Set(lines.map((x)=>x.productId)).size) throw new Error("Phiếu trả chỉ được chọn sản phẩm có vỏ/bồn hoàn trả");
-  const [supplier] = await sql`SELECT id FROM organizations WHERE kind='supplier' AND active=true ORDER BY name LIMIT 1`;
-  if (!supplier) throw new Error("Chưa cấu hình NCC");
+  if (!["workshop", "warehouse_manager", "storekeeper", "mine_xsc"].includes(profile.role)) {
+    throw new Error("Không có quyền trả vỏ NCC");
+  }
+  const lines = input.lines.filter((x) => x.productId && Number(x.quantity) > 0);
+  if (!lines.length) throw new Error("Phiếu trả phải có ít nhất một loại vỏ");
+  if (new Set(lines.map((x) => x.productId)).size !== lines.length) throw new Error("Mỗi loại vỏ chỉ nhập một dòng");
 
   return sql.begin(async (tx) => {
-    const [loc] = await tx`SELECT code FROM locations WHERE id=${input.sourceLocationId}::uuid`;
-    if (!loc) throw new Error("Địa điểm không hợp lệ");
-    if (loc.code === "MINE" && profile.role !== "mine_xsc") throw new Error("Phiếu trả vỏ tại Mỏ chỉ do XSC Mỏ tạo");
-    if (loc.code === "PLANT" && profile.role === "mine_xsc") throw new Error("XSC Mỏ không tạo Phiếu trả vỏ tại Nhà máy");
-    let tripId = input.tripId || null;
-    if (!tripId) {
-      const visitsMine = loc.code === "MINE";
-      const kind = visitsMine ? "mine" : "plant";
-      const price = await resolvePriceRule(tripPriceType(visitsMine, false), input.returnDate, null, tx);
-      if (!price) throw new Error("Chưa cấu hình đơn giá vận chuyển có hiệu lực cho ngày trả");
-      const [trip] = await tx`
-        INSERT INTO transport_trips(trip_code,trip_date,supplier_org_id,visits_plant,visits_mine,co2_liquid_special,trip_kind,price_rule_id,transport_unit_price,transport_amount,created_by,note)
-        VALUES (('TMP-'||gen_random_uuid()::text),${input.returnDate}::date,${supplier.id}::uuid,${loc.code === "PLANT"},${visitsMine},false,${kind},${price?.id ?? null}::uuid,${Number(price?.unit_price ?? 0)},${Number(price?.unit_price ?? 0)},${profile.id}::uuid,${input.note || null})
+    const [delivery] = await tx`
+      SELECT d.id,d.delivery_code,d.trip_id,d.supplier_org_id,d.delivery_date,d.status
+      FROM supplier_deliveries d
+      WHERE d.id=${input.deliveryId}::uuid
+      FOR UPDATE
+    `;
+    if (!delivery) throw new Error("Không tìm thấy Phiếu giao NCC");
+    if (!delivery.trip_id) throw new Error("Phiếu giao chưa có chuyến vận chuyển");
+    if (delivery.status === "cancelled") throw new Error("Phiếu giao đã hủy, không thể trả vỏ cùng chuyến");
+
+    const locations = await tx`
+      SELECT DISTINCT l.id,l.code,l.name
+      FROM supplier_delivery_items di
+      JOIN locations l ON l.id=di.destination_location_id
+      WHERE di.delivery_id=${delivery.id}::uuid
+    `;
+    if (locations.length !== 1) throw new Error("Phiếu giao cũ có nhiều địa điểm; không thể dùng quy trình trả vỏ cùng chuyến mới");
+    const loc = locations[0] as any;
+
+    if (loc.code === "MINE" && profile.role !== "mine_xsc") throw new Error("Phiếu trả vỏ tại Mỏ chỉ do XSC Mỏ thực hiện");
+    if (loc.code === "PLANT" && profile.role === "mine_xsc") throw new Error("XSC Mỏ không trả vỏ cho Phiếu giao Nhà máy");
+
+    const [existing] = await tx`
+      SELECT id,return_code FROM supplier_returns
+      WHERE trip_id=${delivery.trip_id}::uuid AND source_location_id=${loc.id}::uuid AND status<>'cancelled'
+      ORDER BY created_at DESC LIMIT 1
+    `;
+    if (existing) throw new Error(`Chuyến này đã có Phiếu trả vỏ ${existing.return_code}`);
+
+    const validProducts = await tx`
+      SELECT id,code,name,warehouse_split_full_empty,returnable_container
+      FROM products
+      WHERE id IN ${tx(lines.map((x) => x.productId))} AND active=true AND returnable_container=true
+    `;
+    if (validProducts.length !== lines.length) throw new Error("Phiếu trả chỉ được chọn sản phẩm có vỏ/bồn hoàn trả");
+    const productById = new Map((validProducts as any[]).map((p) => [String(p.id), p]));
+
+    const [ret] = await tx`
+      INSERT INTO supplier_returns(return_code,trip_id,supplier_org_id,return_date,source_location_id,status,note,created_by)
+      VALUES (('TMP-'||gen_random_uuid()::text),${delivery.trip_id}::uuid,${delivery.supplier_org_id}::uuid,${toDateKey(delivery.delivery_date)}::date,${loc.id}::uuid,'completed',${input.note || null},${profile.id}::uuid)
+      RETURNING id
+    `;
+    const code = stamp("TRA-NCC", ret.id, toDateKey(delivery.delivery_date));
+    await tx`UPDATE supplier_returns SET return_code=${code} WHERE id=${ret.id}`;
+
+    const wh = loc.code === "PLANT" ? await getStockPointByCode("WH-PHC", tx) : null;
+    const [mine] = loc.code === "MINE"
+      ? await tx`SELECT sp.id FROM stock_points sp JOIN work_groups g ON g.id=sp.group_id WHERE g.code='COI' LIMIT 1`
+      : [null];
+
+    for (const line of lines) {
+      const product = productById.get(line.productId) as any;
+      const quantity = Number(line.quantity);
+      const [item] = await tx`
+        INSERT INTO supplier_return_items(supplier_return_id,product_id,declared_qty,confirmed_qty,status)
+        VALUES (${ret.id}::uuid,${line.productId}::uuid,${quantity},${quantity},'confirmed')
         RETURNING id
       `;
-      tripId = trip.id;
-      await tx`UPDATE transport_trips SET trip_code=${stamp("CHUYEN",trip.id,input.returnDate)} WHERE id=${trip.id}`;
-    } else {
-      const [linkedTrip] = await tx`SELECT trip_date,supplier_org_id,co2_liquid_special FROM transport_trips WHERE id=${tripId}::uuid FOR UPDATE`;
-      if (!linkedTrip) throw new Error("Không tìm thấy chuyến đã chọn");
-      if (toDateKey(linkedTrip.trip_date) !== input.returnDate) throw new Error("Phiếu trả vỏ chỉ được ghép vào chuyến cùng ngày");
-      if (linkedTrip.supplier_org_id && linkedTrip.supplier_org_id !== supplier.id) throw new Error("Chuyến không thuộc NCC này");
-      if (loc.code === "MINE" && !linkedTrip.co2_liquid_special) {
-      const price = await resolvePriceRule("trip_mine", input.returnDate, null, tx);
-      if (!price) throw new Error("Chưa cấu hình đơn giá chuyến Mỏ có hiệu lực");
-      await tx`
-        UPDATE transport_trips SET visits_mine=true,trip_kind='mine',price_rule_id=${price?.id ?? null}::uuid,
-          transport_unit_price=${Number(price?.unit_price ?? 0)},transport_amount=${Number(price?.unit_price ?? 0)}
-        WHERE id=${tripId}::uuid AND co2_liquid_special=false
-      `;
+
+      const pointId = loc.code === "MINE" ? mine?.id : wh?.id;
+      if (!pointId) throw new Error("Chưa cấu hình điểm tồn để trả vỏ");
+      const bucket = loc.code === "MINE" ? "managed" : product.warehouse_split_full_empty ? "empty" : "available";
+      await applyStockDelta({
+        tx,
+        stockPointId: pointId,
+        productId: line.productId,
+        bucket,
+        delta: -quantity,
+        referenceType: "supplier_return",
+        referenceId: ret.id,
+        actorUserId: profile.id,
+        occurredDate: toDateKey(delivery.delivery_date),
+        note: `Trả vỏ cùng chuyến ${delivery.delivery_code}`,
+      });
+
+      if (["LOX-XL45", "LIN-XL45"].includes(String(product.code)) && quantity > 0) {
+        await allocateXL45Return(tx, item.id, line.productId, loc.id, toDateKey(delivery.delivery_date), quantity);
       }
     }
 
-    const [ret] = await tx`
-      INSERT INTO supplier_returns(return_code,trip_id,supplier_org_id,return_date,source_location_id,note,created_by)
-      VALUES (('TMP-'||gen_random_uuid()::text),${tripId}::uuid,${supplier.id}::uuid,${input.returnDate}::date,${input.sourceLocationId}::uuid,${input.note || null},${profile.id}::uuid)
-      RETURNING id
-    `;
-    const code = stamp("TRA-NCC",ret.id,input.returnDate);
-    await tx`UPDATE supplier_returns SET return_code=${code} WHERE id=${ret.id}`;
-    await tx`UPDATE transport_trips SET status='completed' WHERE id=${tripId}::uuid`;
-    for (const line of lines) {
-      await tx`INSERT INTO supplier_return_items(supplier_return_id,product_id,declared_qty) VALUES (${ret.id}::uuid,${line.productId}::uuid,${line.quantity})`;
-    }
-    await audit({ tx, actorUserId: profile.id, action: "create", entityType: "supplier_return", entityId: ret.id, after: { code, tripId, ...input } });
-    return { id: ret.id as string, code, tripId };
+    await audit({
+      tx,
+      actorUserId: profile.id,
+      action: "return_with_delivery",
+      entityType: "supplier_return",
+      entityId: ret.id,
+      after: {
+        code,
+        deliveryId: delivery.id,
+        deliveryCode: delivery.delivery_code,
+        tripId: delivery.trip_id,
+        locationCode: loc.code,
+        lines,
+        extraTransportCost: 0,
+      },
+    });
+    return { id: ret.id as string, code, tripId: delivery.trip_id as string };
   });
 }
 
-export async function confirmSupplierReturn(profile: Profile, returnId: string, itemActuals: { itemId: string; quantity: number }[], feedback?: string) {
-  if (!["supplier"].includes(profile.role)) throw new Error("Chỉ NCC được xác nhận nhận vỏ");
-  await sql.begin(async (tx) => {
-    const rows = await tx`
-      SELECT r.*,l.code AS location_code FROM supplier_returns r JOIN locations l ON l.id=r.source_location_id
-      WHERE r.id=${returnId}::uuid FOR UPDATE
-    `;
-    const ret = rows[0];
-    if (!ret || ret.status !== "pending") throw new Error("Phiếu không còn chờ NCC xác nhận; phiếu có phản hồi phải xử lý bằng điều chỉnh để tránh trừ tồn lần hai");
-    if (profile.role === "supplier" && profile.organization_id !== ret.supplier_org_id) throw new Error("Phiếu không thuộc NCC này");
+export async function feedbackSupplierReturnItem(profile: Profile, itemId: string, feedback: string) {
+  if (profile.role !== "supplier" || !profile.organization_id) throw new Error("Chỉ NCC được phản hồi Phiếu trả vỏ");
+  const message = feedback.trim();
+  if (!message) throw new Error("Vui lòng nhập nội dung phản hồi");
 
-    const wh = await getStockPointByCode("WH-PHC", tx);
-    const [mine] = await tx`SELECT sp.id FROM stock_points sp JOIN work_groups g ON g.id=sp.group_id WHERE g.code='COI' LIMIT 1`;
-    let hasDifference = false;
-    for (const actual of itemActuals) {
-      const [item] = await tx`
-        SELECT ri.*,p.code AS product_code,p.warehouse_split_full_empty,p.returnable_container
-        FROM supplier_return_items ri JOIN products p ON p.id=ri.product_id
-        WHERE ri.id=${actual.itemId}::uuid AND ri.supplier_return_id=${returnId}::uuid FOR UPDATE
-      `;
-      if (!item) continue;
-      if (actual.quantity < 0) throw new Error("Số lượng nhận không hợp lệ");
-      hasDifference ||= Number(actual.quantity) !== Number(item.declared_qty);
-      const bucket = ret.location_code === "MINE" ? "managed" : item.warehouse_split_full_empty ? "empty" : "available";
-      const pointId = ret.location_code === "MINE" ? mine?.id : wh.id;
-      if (!pointId) throw new Error("Chưa cấu hình điểm tồn");
-      await applyStockDelta({ tx, stockPointId: pointId, productId: item.product_id, bucket, delta: -actual.quantity, referenceType: "supplier_return", referenceId: returnId, actorUserId: profile.id, occurredDate: toDateKey(ret.return_date) });
-      if (["LOX-XL45","LIN-XL45"].includes(item.product_code) && actual.quantity > 0) {
-        await allocateXL45Return(tx, item.id, item.product_id, ret.source_location_id, toDateKey(ret.return_date), actual.quantity);
-      }
-      await tx`
-        UPDATE supplier_return_items SET confirmed_qty=${actual.quantity},status=${Number(actual.quantity) === Number(item.declared_qty) ? "confirmed" : "feedback"},feedback=${Number(actual.quantity) === Number(item.declared_qty) ? null : feedback || "Số lượng NCC nhận khác số khai trả"}
-        WHERE id=${actual.itemId}::uuid
-      `;
-    }
-    await tx`
-      UPDATE supplier_returns SET status=${hasDifference ? "feedback" : "completed"},supplier_confirmed_by=${profile.id}::uuid,supplier_confirmed_at=now()
-      WHERE id=${returnId}::uuid
+  await sql.begin(async (tx) => {
+    const [item] = await tx`
+      SELECT ri.id,ri.supplier_return_id,r.supplier_org_id,r.status
+      FROM supplier_return_items ri
+      JOIN supplier_returns r ON r.id=ri.supplier_return_id
+      WHERE ri.id=${itemId}::uuid
+      FOR UPDATE OF ri
     `;
-    await audit({ tx, actorUserId: profile.id, action: "supplier_confirm", entityType: "supplier_return", entityId: returnId, after: { itemActuals, hasDifference }, note: feedback });
+    if (!item || item.supplier_org_id !== profile.organization_id) throw new Error("Dòng trả vỏ không thuộc NCC này");
+    if (item.status === "cancelled") throw new Error("Phiếu đã hủy");
+
+    await tx`UPDATE supplier_return_items SET status='feedback',feedback=${message} WHERE id=${itemId}::uuid`;
+    await tx`UPDATE supplier_returns SET status='feedback' WHERE id=${item.supplier_return_id}::uuid`;
+    await audit({
+      tx,
+      actorUserId: profile.id,
+      action: "supplier_feedback",
+      entityType: "supplier_return_item",
+      entityId: itemId,
+      after: { feedback: message },
+      note: "Chỉ phản hồi; không tự đảo tồn. Sai lệch được xử lý bằng điều chỉnh có lịch sử.",
+    });
   });
 }
 
@@ -152,19 +191,45 @@ export async function listSupplierReturns(profile: Profile) {
   const supplierId = profile.role === "supplier" ? profile.organization_id : null;
   if (supplierId) {
     return sql`
-      SELECT r.id,r.return_code,r.return_date,r.status,r.note,l.name AS source_location,t.trip_code,
-        COALESCE(json_agg(json_build_object('id',ri.id,'product_name',p.name,'unit',p.unit,'declared_qty',ri.declared_qty,'confirmed_qty',ri.confirmed_qty,'status',ri.status,'feedback',ri.feedback) ORDER BY p.display_order),'[]'::json) AS items
-      FROM supplier_returns r JOIN locations l ON l.id=r.source_location_id LEFT JOIN transport_trips t ON t.id=r.trip_id
-      LEFT JOIN supplier_return_items ri ON ri.supplier_return_id=r.id LEFT JOIN products p ON p.id=ri.product_id
+      SELECT r.id,r.return_code,r.return_date,r.status,r.note,r.trip_id,l.name AS source_location,l.code AS source_location_code,t.trip_code,
+        d.delivery_code,
+        COALESCE(json_agg(json_build_object(
+          'id',ri.id,'product_id',ri.product_id,'product_name',p.name,'unit',p.unit,
+          'declared_qty',ri.declared_qty,'confirmed_qty',ri.confirmed_qty,'status',ri.status,'feedback',ri.feedback
+        ) ORDER BY p.display_order) FILTER (WHERE ri.id IS NOT NULL),'[]'::json) AS items
+      FROM supplier_returns r
+      JOIN locations l ON l.id=r.source_location_id
+      LEFT JOIN transport_trips t ON t.id=r.trip_id
+      LEFT JOIN LATERAL (
+        SELECT sd.delivery_code FROM supplier_deliveries sd
+        WHERE sd.trip_id=r.trip_id
+        ORDER BY sd.created_at LIMIT 1
+      ) d ON true
+      LEFT JOIN supplier_return_items ri ON ri.supplier_return_id=r.id
+      LEFT JOIN products p ON p.id=ri.product_id
       WHERE r.supplier_org_id=${supplierId}::uuid
-      GROUP BY r.id,l.name,t.trip_code ORDER BY r.return_date DESC,r.created_at DESC LIMIT 100
+      GROUP BY r.id,l.name,l.code,t.trip_code,d.delivery_code
+      ORDER BY r.return_date DESC,r.created_at DESC LIMIT 100
     `;
   }
   return sql`
-    SELECT r.id,r.return_code,r.return_date,r.status,r.note,l.name AS source_location,t.trip_code,
-      COALESCE(json_agg(json_build_object('id',ri.id,'product_name',p.name,'unit',p.unit,'declared_qty',ri.declared_qty,'confirmed_qty',ri.confirmed_qty,'status',ri.status,'feedback',ri.feedback) ORDER BY p.display_order),'[]'::json) AS items
-    FROM supplier_returns r JOIN locations l ON l.id=r.source_location_id LEFT JOIN transport_trips t ON t.id=r.trip_id
-    LEFT JOIN supplier_return_items ri ON ri.supplier_return_id=r.id LEFT JOIN products p ON p.id=ri.product_id
-    GROUP BY r.id,l.name,t.trip_code ORDER BY r.return_date DESC,r.created_at DESC LIMIT 100
+    SELECT r.id,r.return_code,r.return_date,r.status,r.note,r.trip_id,l.name AS source_location,l.code AS source_location_code,t.trip_code,
+      d.delivery_code,
+      COALESCE(json_agg(json_build_object(
+        'id',ri.id,'product_id',ri.product_id,'product_name',p.name,'unit',p.unit,
+        'declared_qty',ri.declared_qty,'confirmed_qty',ri.confirmed_qty,'status',ri.status,'feedback',ri.feedback
+      ) ORDER BY p.display_order) FILTER (WHERE ri.id IS NOT NULL),'[]'::json) AS items
+    FROM supplier_returns r
+    JOIN locations l ON l.id=r.source_location_id
+    LEFT JOIN transport_trips t ON t.id=r.trip_id
+    LEFT JOIN LATERAL (
+      SELECT sd.delivery_code FROM supplier_deliveries sd
+      WHERE sd.trip_id=r.trip_id
+      ORDER BY sd.created_at LIMIT 1
+    ) d ON true
+    LEFT JOIN supplier_return_items ri ON ri.supplier_return_id=r.id
+    LEFT JOIN products p ON p.id=ri.product_id
+    GROUP BY r.id,l.name,l.code,t.trip_code,d.delivery_code
+    ORDER BY r.return_date DESC,r.created_at DESC LIMIT 100
   `;
 }

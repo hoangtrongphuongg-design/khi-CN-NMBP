@@ -9,48 +9,51 @@ import { FormField } from "@/components/ui/form-field";
 
 type Product = { id: string; code: string; name: string; unit: string };
 type Location = { id: string; code: string; name: string };
-type Line = { key: string; productId: string; destinationLocationId: string; quantity: number };
+type Line = { key: string; productId: string; quantity: number };
 
 export function DeliveryCreateForm({ products, locations, today }: { products: Product[]; locations: Location[]; today: string }) {
+  const [destinationLocationId, setDestinationLocationId] = useState(locations[0]?.id || "");
   const [lines, setLines] = useState<Line[]>([
-    { key: crypto.randomUUID(), productId: products[0]?.id || "", destinationLocationId: locations[0]?.id || "", quantity: 1 },
+    { key: crypto.randomUUID(), productId: products[0]?.id || "", quantity: 1 },
   ]);
   const payload = useMemo(
-    () => lines.map(({ productId, destinationLocationId, quantity }) => ({ productId, destinationLocationId, quantity })),
-    [lines],
+    () => lines.map(({ productId, quantity }) => ({ productId, destinationLocationId, quantity })),
+    [lines, destinationLocationId],
   );
+  const selectedLocation = locations.find((l) => l.id === destinationLocationId);
 
   return (
     <form action="/api/deliveries" method="post" className="grid gap-4">
       <input type="hidden" name="action" value="create_delivery" />
       <input type="hidden" name="lines" value={JSON.stringify(payload)} />
 
-      <div className="grid gap-3 md:grid-cols-[180px_1fr]">
+      <div className="grid gap-3 md:grid-cols-3">
         <FormField label="Ngày giao">
           <Input name="delivery_date" type="date" defaultValue={today} required />
+        </FormField>
+        <FormField label="Địa điểm giao" hint="1 phiếu giao = 1 chuyến = 1 cước">
+          <Select value={destinationLocationId} onChange={(e) => setDestinationLocationId(e.target.value)} required>
+            {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+          </Select>
         </FormField>
         <FormField label="Ghi chú" hint="Không bắt buộc">
           <Input name="note" placeholder="Có thể để trống" />
         </FormField>
       </div>
 
+      <div className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs font-semibold text-[var(--brand-deep)]">
+        {selectedLocation?.code === "MINE" ? "Phiếu này tính 1 cước Mỏ Tà Thiết." : "Phiếu này tính 1 cước Nhà máy."} Trả vỏ cùng chuyến sẽ không phát sinh thêm cước.
+      </div>
+
       <div className="grid gap-2">
         {lines.map((line, index) => (
-          <div key={line.key} className="grid gap-2 rounded-xl border border-[var(--border)] bg-white p-3 md:grid-cols-[1.35fr_1fr_130px_42px] md:items-end">
+          <div key={line.key} className="grid gap-2 rounded-xl border border-[var(--border)] bg-white p-3 md:grid-cols-[1fr_150px_42px] md:items-end">
             <FormField label={index === 0 ? "Loại khí / sản phẩm" : `Loại khí ${index + 1}`}>
               <Select
                 value={line.productId}
                 onChange={(e) => setLines((old) => old.map((x) => (x.key === line.key ? { ...x, productId: e.target.value } : x)))}
               >
-                {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </Select>
-            </FormField>
-            <FormField label="Điểm giao">
-              <Select
-                value={line.destinationLocationId}
-                onChange={(e) => setLines((old) => old.map((x) => (x.key === line.key ? { ...x, destinationLocationId: e.target.value } : x)))}
-              >
-                {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                {products.filter((p) => p.id === line.productId || !lines.some((x) => x.productId === p.id)).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </Select>
             </FormField>
             <FormField label="Số lượng">
@@ -79,27 +82,17 @@ export function DeliveryCreateForm({ products, locations, today }: { products: P
         <Button
           type="button"
           variant="secondary"
-          onClick={() => setLines((old) => [...old, {
-            key: crypto.randomUUID(),
-            productId: products[0]?.id || "",
-            destinationLocationId: locations[0]?.id || "",
-            quantity: 1,
-          }])}
+          disabled={lines.length >= products.length}
+          onClick={() => {
+            const next = products.find((p) => !lines.some((x) => x.productId === p.id));
+            if (!next) return;
+            setLines((old) => [...old, { key: crypto.randomUUID(), productId: next.id, quantity: 1 }]);
+          }}
         >
-          <Plus size={17} /> Thêm dòng
+          <Plus size={17} /> Thêm loại khí
         </Button>
-        <Button type="submit" className="ml-auto min-w-[150px]">Tạo phiếu</Button>
+        <Button type="submit" className="ml-auto min-w-[160px]"><Send size={17}/> Tạo phiếu giao</Button>
       </div>
-
-      <details className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--paper)] px-3 py-2">
-        <summary className="flex cursor-pointer list-none items-center gap-2 text-xs font-bold text-[var(--muted-foreground)]">
-          <ChevronDown size={15} /> Tùy chọn chuyến xe
-        </summary>
-        <div className="mt-3 flex flex-wrap gap-4 text-sm">
-          <label className="flex items-center gap-2"><input type="checkbox" name="visits_mine" /> Xe có vào Mỏ Tà Thiết để giao hoặc gom vỏ</label>
-          <label className="flex items-center gap-2"><input type="checkbox" name="co2_special" /> Xe chuyên dụng CO₂ lỏng</label>
-        </div>
-      </details>
     </form>
   );
 }
