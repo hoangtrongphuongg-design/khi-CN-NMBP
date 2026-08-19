@@ -269,3 +269,20 @@ Có cơ cấu chi phí, xu hướng, top loại khí, bảng tổng hợp theo l
 - Mỏ: XSC Mỏ thực hiện; số vỏ trả trừ ngay tổng số chai Nhóm Cối/Mỏ đang quản lý.
 - NCC không cần xác nhận nhận vỏ. NCC chỉ xem; nếu có sai lệch thì phản hồi. Phản hồi không tự đảo tồn; sai số được xử lý bằng điều chỉnh có lịch sử.
 - Báo cáo cước chỉ lấy các chuyến gắn với Phiếu giao đã PHC hoàn tất. Phiếu trả vỏ không thể tạo thêm cước.
+
+
+## Số dư vỏ đầu kỳ 2026
+- NMBP bắt đầu nhập giao dịch mới từ 01/01/2026 nhưng số vỏ thuê được kế thừa từ nợ vỏ cuối năm 2025.
+- Mốc đầu kỳ 01/01/2026 theo bảng nợ vỏ 24/12/2025:
+  - O2: 71 vỏ
+  - Ar/CO2: 16 vỏ
+  - N2: 8 vỏ
+  - CO2: 10 vỏ
+  - Argon: 2 vỏ
+  - XL-45: 0
+  - Tổng chai khí tính thuê: 107 vỏ
+  - LPG 12 kg: 15 chai
+  - LPG 45 kg: 8 chai
+- Phí thuê vỏ 2.000 đồng/vỏ/ngày áp dụng cho 107 chai khí công nghiệp từ 01/01/2026.
+- LPG được lưu số dư đầu kỳ để đối chiếu nhưng không thuộc nhóm `cylinder_rental_eligible` theo cấu hình hiện tại.
+- Số liệu đầu kỳ này là nợ vỏ tổng với NCC, không phải phân bổ vật lý Kho/Nhóm/Mỏ.

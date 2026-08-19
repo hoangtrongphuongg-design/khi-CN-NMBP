@@ -112,8 +112,8 @@ export type CylinderRentalSummaryRow = {
 
 /**
  * Thuê vỏ = tổng số vỏ cuối từng ngày của từng loại khí × đơn giá thuê có hiệu lực ngày đó.
- * Tổng tồn toàn NMBP được dựng từ stock_ledger. Các nghiệp vụ nội bộ có tổng delta = 0,
- * còn giao NCC làm tăng và trả NCC làm giảm tổng vỏ thuê.
+ * Số vỏ tính thuê được dựng từ "nợ vỏ đầu kỳ" + giao NCC - trả NCC.
+ * Nghiệp vụ nội bộ Kho/Nhóm/Mỏ không ảnh hưởng số vỏ thuê.
  */
 export async function getCylinderRentalDaily(params: {
   startDate: string;
@@ -151,9 +151,30 @@ export async function getCylinderRentalDaily(params: {
     FROM days
     CROSS JOIN eligible_products p
     LEFT JOIN LATERAL (
-      SELECT COALESCE(SUM(sl.delta),0)::numeric AS held_qty
+      SELECT ob.opening_date,ob.qty
+      FROM supplier_container_opening_balances ob
+      WHERE ob.product_id=p.id
+        AND ob.opening_date<=days.day
+      ORDER BY ob.opening_date DESC
+      LIMIT 1
+    ) opening ON true
+    LEFT JOIN LATERAL (
+      SELECT (
+        COALESCE(opening.qty,0)
+        + COALESCE(SUM(
+            CASE
+              WHEN sl.reference_type IN ('supplier_delivery','supplier_delivery_mine') AND sl.delta>0 THEN sl.delta
+              WHEN sl.reference_type='supplier_return' AND sl.delta<0 THEN sl.delta
+              ELSE 0
+            END
+          ),0)
+      )::numeric AS held_qty
       FROM stock_ledger sl
       WHERE sl.product_id=p.id
+        AND sl.occurred_at >= COALESCE(
+          opening.opening_date AT TIME ZONE 'Asia/Ho_Chi_Minh',
+          '1900-01-01 00:00:00+07'::timestamptz
+        )
         AND sl.occurred_at < ((days.day + interval '1 day') AT TIME ZONE 'Asia/Ho_Chi_Minh')
     ) held ON true
     LEFT JOIN LATERAL (
