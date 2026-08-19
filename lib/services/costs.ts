@@ -171,6 +171,7 @@ export async function getCylinderRentalDaily(params: {
       WHERE price_type='cylinder_rental_day'
         AND product_id IS NULL
         AND effective_from<=days.day
+        AND (effective_to IS NULL OR effective_to>=days.day)
       ORDER BY effective_from DESC,created_at DESC
       LIMIT 1
     ) pr ON true
@@ -272,6 +273,7 @@ export async function getGoodsCostDetails(params: {
       SELECT x.unit_price
       FROM price_rules x
       WHERE x.price_type='product' AND x.product_id=di.product_id AND x.effective_from<=d.delivery_date
+        AND (x.effective_to IS NULL OR x.effective_to>=d.delivery_date)
       ORDER BY x.effective_from DESC,x.created_at DESC
       LIMIT 1
     ) pr ON true
@@ -430,6 +432,7 @@ export async function getXL45RentalDaily(params: {
     LEFT JOIN LATERAL (
       SELECT unit_price FROM price_rules
       WHERE price_type='xl45_rental_day' AND product_id IS NULL AND effective_from<=days.day
+        AND (effective_to IS NULL OR effective_to>=days.day)
       ORDER BY effective_from DESC,created_at DESC LIMIT 1
     ) pr ON true
     WHERE days.day>=l.delivered_date

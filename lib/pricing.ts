@@ -3,11 +3,9 @@ import { sql } from "@/lib/db";
 export type PriceType = "product" | "trip_plant" | "trip_mine" | "trip_co2_liquid" | "cylinder_rental_day" | "xl45_rental_day";
 
 export async function resolvePriceRule(priceType: PriceType, businessDate: string, productId?: string | null, tx: any = sql) {
-  // Nghiệp vụ đã chốt: một đơn giá có hiệu lực từ ngày X và tiếp tục áp dụng
-  // cho đến khi có phiên bản giá mới. Vì vậy quy tắc xác định giá chuẩn là:
-  // "phiên bản mới nhất có effective_from <= ngày nghiệp vụ".
-  // effective_to chỉ là dữ liệu dẫn xuất để hiển thị/đối soát, không được
-  // phép tạo khoảng trống làm chặn giao nhận.
+  // Đơn giá chỉ áp dụng trong đúng khoảng hiệu lực.
+  // Giá HĐ 121/CCKCN-2026: 01/01/2026 -> 31/12/2026.
+  // Khi có giá mới, Admin tạo phiên bản mới với ngày hiệu lực tương ứng.
   if (priceType === "product") {
     if (!productId) return null;
     const rows = await tx`
@@ -16,6 +14,8 @@ export async function resolvePriceRule(priceType: PriceType, businessDate: strin
       WHERE price_type='product'
         AND product_id=${productId}::uuid
         AND effective_from<=${businessDate}::date
+      AND (effective_to IS NULL OR effective_to>=${businessDate}::date)
+        AND (effective_to IS NULL OR effective_to>=${businessDate}::date)
       ORDER BY effective_from DESC,created_at DESC
       LIMIT 1
     `;
@@ -28,6 +28,7 @@ export async function resolvePriceRule(priceType: PriceType, businessDate: strin
     WHERE price_type=${priceType}
       AND product_id IS NULL
       AND effective_from<=${businessDate}::date
+      AND (effective_to IS NULL OR effective_to>=${businessDate}::date)
     ORDER BY effective_from DESC,created_at DESC
     LIMIT 1
   `;

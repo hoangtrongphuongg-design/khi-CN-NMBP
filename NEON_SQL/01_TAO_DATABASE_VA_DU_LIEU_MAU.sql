@@ -497,13 +497,13 @@ ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name, location_id = EXCLUDED.lo
 
 -- Hợp đồng nguyên tắc Anh Tân 2026
 INSERT INTO contracts(supplier_org_id,contract_no,contract_name,signed_date,valid_from,valid_to)
-SELECT o.id,'121/CCKCN-2026','Cung cấp các loại khí công nghiệp năm 2026','2026-03-02','2026-03-02','2027-03-01'
+SELECT o.id,'121/CCKCN-2026','Cung cấp các loại khí công nghiệp năm 2026','2026-01-01','2026-01-01','2026-12-31'
 FROM organizations o WHERE o.code='ANHTAN'
 AND NOT EXISTS (SELECT 1 FROM contracts WHERE contract_no='121/CCKCN-2026');
 
 WITH c AS (SELECT id FROM contracts WHERE contract_no='121/CCKCN-2026' ORDER BY created_at DESC LIMIT 1)
-INSERT INTO price_rules(contract_id,price_type,product_id,unit,unit_price,effective_from,note)
-SELECT c.id,'product',p.id,p.unit,v.price,'2026-03-02','Đơn giá HĐ 121/CCKCN-2026'
+INSERT INTO price_rules(contract_id,price_type,product_id,unit,unit_price,effective_from,effective_to,note)
+SELECT c.id,'product',p.id,p.unit,v.price,'2026-01-01','2026-12-31','Đơn giá HĐ 121/CCKCN-2026'
 FROM c
 JOIN (VALUES
   ('O2',80000::numeric),('CO2',300000),('N2',154000),('LOX-XL45',2750000),('LIN-XL45',2850000),
@@ -511,12 +511,12 @@ JOIN (VALUES
 ) v(code,price) ON true
 JOIN products p ON p.code=v.code
 WHERE NOT EXISTS (
-  SELECT 1 FROM price_rules pr WHERE pr.contract_id=c.id AND pr.price_type='product' AND pr.product_id=p.id AND pr.effective_from='2026-03-02'
+  SELECT 1 FROM price_rules pr WHERE pr.contract_id=c.id AND pr.price_type='product' AND pr.product_id=p.id AND pr.effective_from='2026-01-01'
 );
 
 WITH c AS (SELECT id FROM contracts WHERE contract_no='121/CCKCN-2026' ORDER BY created_at DESC LIMIT 1)
-INSERT INTO price_rules(contract_id,price_type,unit,unit_price,effective_from,note)
-SELECT c.id,v.price_type,v.unit,v.price,'2026-03-02','Đơn giá HĐ 121/CCKCN-2026'
+INSERT INTO price_rules(contract_id,price_type,unit,unit_price,effective_from,effective_to,note)
+SELECT c.id,v.price_type,v.unit,v.price,'2026-01-01','2026-12-31','Đơn giá HĐ 121/CCKCN-2026'
 FROM c
 JOIN (VALUES
  ('trip_plant','chuyến',1600000::numeric),
@@ -526,7 +526,7 @@ JOIN (VALUES
  ('xl45_rental_day','bồn/ngày',150000::numeric)
 ) v(price_type,unit,price) ON true
 WHERE NOT EXISTS (
- SELECT 1 FROM price_rules pr WHERE pr.contract_id=c.id AND pr.price_type=v.price_type AND pr.effective_from='2026-03-02'
+ SELECT 1 FROM price_rules pr WHERE pr.contract_id=c.id AND pr.price_type=v.price_type AND pr.effective_from='2026-01-01'
 );
 
 COMMIT;

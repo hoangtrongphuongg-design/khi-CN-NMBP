@@ -17,7 +17,7 @@ ON CONFLICT (code) DO UPDATE SET name=EXCLUDED.name,kind='supplier',active=true;
 
 INSERT INTO contracts(supplier_org_id,contract_no,contract_name,signed_date,valid_from,valid_to,active)
 SELECT o.id,'121/CCKCN-2026','Cung cấp các loại khí công nghiệp năm 2026',
-       DATE '2026-03-02',DATE '2026-03-02',DATE '2027-03-01',true
+       DATE '2026-01-01',DATE '2026-01-01',DATE '2026-12-31',true
 FROM organizations o
 WHERE o.code='ANHTAN'
 ON CONFLICT (supplier_org_id,contract_no) DO UPDATE SET
@@ -27,7 +27,7 @@ ON CONFLICT (supplier_org_id,contract_no) DO UPDATE SET
   valid_to=EXCLUDED.valid_to,
   active=true;
 
--- 2) Bổ sung giá gốc HĐ nếu CHƯA có đúng mốc 02/03/2026.
+-- 2) Bổ sung giá gốc HĐ nếu CHƯA có đúng mốc 01/01/2026.
 --    ON CONFLICT DO NOTHING để không ghi đè giá đã tồn tại.
 WITH c AS (
   SELECT id FROM contracts WHERE contract_no='121/CCKCN-2026' ORDER BY created_at DESC LIMIT 1
@@ -45,8 +45,8 @@ WITH c AS (
     ('LPG45',1650000::numeric),
     ('LPG12',440000::numeric)
 )
-INSERT INTO price_rules(contract_id,price_type,product_id,unit,unit_price,effective_from,note)
-SELECT c.id,'product',p.id,p.unit,b.price,DATE '2026-03-02','Giá gốc HĐ 121/CCKCN-2026'
+INSERT INTO price_rules(contract_id,price_type,product_id,unit,unit_price,effective_from,effective_to,note)
+SELECT c.id,'product',p.id,p.unit,b.price,DATE '2026-01-01',DATE '2026-12-31','Giá gốc HĐ 121/CCKCN-2026'
 FROM c
 JOIN base b ON true
 JOIN products p ON p.code=b.code
@@ -63,8 +63,8 @@ WITH c AS (
     ('cylinder_rental_day','vỏ/ngày',2000::numeric),
     ('xl45_rental_day','bồn/ngày',150000::numeric)
 )
-INSERT INTO price_rules(contract_id,price_type,unit,unit_price,effective_from,note)
-SELECT c.id,b.price_type,b.unit,b.price,DATE '2026-03-02','Giá gốc HĐ 121/CCKCN-2026'
+INSERT INTO price_rules(contract_id,price_type,unit,unit_price,effective_from,effective_to,note)
+SELECT c.id,b.price_type,b.unit,b.price,DATE '2026-01-01',DATE '2026-12-31','Giá gốc HĐ 121/CCKCN-2026'
 FROM c
 JOIN base b ON true
 ON CONFLICT (price_type,effective_from) WHERE price_type<>'product' DO NOTHING;
