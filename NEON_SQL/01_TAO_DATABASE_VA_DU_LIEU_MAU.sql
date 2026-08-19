@@ -88,6 +88,17 @@ CREATE TABLE IF NOT EXISTS products (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+
+CREATE TABLE IF NOT EXISTS supplier_container_opening_balances (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  product_id uuid NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  opening_date date NOT NULL,
+  qty numeric(14,3) NOT NULL CHECK (qty >= 0),
+  note text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(product_id,opening_date)
+);
+
 CREATE TABLE IF NOT EXISTS group_norms (
   group_id uuid NOT NULL REFERENCES work_groups(id) ON DELETE CASCADE,
   product_id uuid NOT NULL REFERENCES products(id) ON DELETE CASCADE,
@@ -111,7 +122,7 @@ CREATE TABLE IF NOT EXISTS stock_points (
 CREATE TABLE IF NOT EXISTS stock_balances (
   stock_point_id uuid NOT NULL REFERENCES stock_points(id) ON DELETE CASCADE,
   product_id uuid NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-  bucket text NOT NULL CHECK (bucket IN ('full','empty','managed','available','transit')),
+  bucket text NOT NULL CHECK (bucket IN ('full','empty','unclassified','managed','available','transit')),
   qty numeric(14,3) NOT NULL DEFAULT 0 CHECK (qty >= 0),
   updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (stock_point_id, product_id, bucket)
@@ -121,7 +132,7 @@ CREATE TABLE IF NOT EXISTS stock_ledger (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   stock_point_id uuid NOT NULL REFERENCES stock_points(id),
   product_id uuid NOT NULL REFERENCES products(id),
-  bucket text NOT NULL CHECK (bucket IN ('full','empty','managed','available','transit')),
+  bucket text NOT NULL CHECK (bucket IN ('full','empty','unclassified','managed','available','transit')),
   delta numeric(14,3) NOT NULL,
   balance_after numeric(14,3) NOT NULL,
   reference_type text NOT NULL,
@@ -412,9 +423,12 @@ SELECT
   p.unit,
   COALESCE(MAX(CASE WHEN sb.bucket = 'full' THEN sb.qty END), 0)::numeric AS full_qty,
   COALESCE(MAX(CASE WHEN sb.bucket = 'empty' THEN sb.qty END), 0)::numeric AS empty_qty,
+  COALESCE(MAX(CASE WHEN sb.bucket = 'unclassified' THEN sb.qty END), 0)::numeric AS unclassified_qty,
   CASE
     WHEN sp.kind = 'warehouse' AND p.warehouse_split_full_empty THEN
-      (COALESCE(MAX(CASE WHEN sb.bucket = 'full' THEN sb.qty END), 0) + COALESCE(MAX(CASE WHEN sb.bucket = 'empty' THEN sb.qty END), 0))::numeric
+      (COALESCE(MAX(CASE WHEN sb.bucket = 'full' THEN sb.qty END), 0)
+       + COALESCE(MAX(CASE WHEN sb.bucket = 'empty' THEN sb.qty END), 0)
+       + COALESCE(MAX(CASE WHEN sb.bucket = 'unclassified' THEN sb.qty END), 0))::numeric
     WHEN sp.kind = 'group' THEN COALESCE(MAX(CASE WHEN sb.bucket = 'managed' THEN sb.qty END), 0)::numeric
     WHEN sp.kind = 'transit' THEN COALESCE(MAX(CASE WHEN sb.bucket = 'transit' THEN sb.qty END), 0)::numeric
     ELSE COALESCE(MAX(CASE WHEN sb.bucket = 'available' THEN sb.qty END), 0)::numeric
@@ -528,5 +542,46 @@ JOIN (VALUES
 WHERE NOT EXISTS (
  SELECT 1 FROM price_rules pr WHERE pr.contract_id=c.id AND pr.price_type=v.price_type AND pr.effective_from='2026-01-01'
 );
+
+
+-- Số dư đầu kỳ 01/01/2026 kế thừa nợ vỏ cuối năm 2025.
+-- 107 chai khí công nghiệp tính thuê; LPG chỉ quản lý tồn, không tính thuê vỏ.
+INSERT INTO supplier_container_opening_balances(product_id,opening_date,qty,note)
+SELECT p.id,DATE '2026-01-01',v.qty,'Số dư nợ vỏ đầu kỳ 2026'
+FROM (VALUES
+  ('O2',71::numeric),('ARCO2',16::numeric),('N2',8::numeric),('CO2',10::numeric),('AR',2::numeric),
+  ('LPG12',15::numeric),('LPG45',8::numeric)
+) v(code,qty)
+JOIN products p ON p.code=v.code
+ON CONFLICT(product_id,opening_date) DO NOTHING;
+
+-- Đồng thời ghi nhận là tồn vật lý Kho Hậu cần đầu kỳ chưa phân loại đầy/rỗng.
+INSERT INTO stock_balances(stock_point_id,product_id,bucket,qty,updated_at)
+SELECT sp.id,p.id,'unclassified',v.qty,now()
+FROM stock_points sp
+JOIN (VALUES
+  ('O2',71::numeric),('ARCO2',16::numeric),('N2',8::numeric),('CO2',10::numeric),('AR',2::numeric),
+  ('LPG12',15::numeric),('LPG45',8::numeric)
+) v(code,qty) ON true
+JOIN products p ON p.code=v.code
+WHERE sp.code='WH-PHC'
+ON CONFLICT(stock_point_id,product_id,bucket) DO NOTHING;
+
+INSERT INTO stock_ledger(stock_point_id,product_id,bucket,delta,balance_after,reference_type,reference_id,note,occurred_at,created_by)
+SELECT sp.id,p.id,'unclassified',v.qty,v.qty,'opening_balance_2026',NULL,
+       'Tồn đầu kỳ Kho Hậu cần chưa phân loại đầy/rỗng',
+       (DATE '2026-01-01' + TIME '00:00') AT TIME ZONE 'Asia/Ho_Chi_Minh',NULL
+FROM stock_points sp
+JOIN (VALUES
+  ('O2',71::numeric),('ARCO2',16::numeric),('N2',8::numeric),('CO2',10::numeric),('AR',2::numeric),
+  ('LPG12',15::numeric),('LPG45',8::numeric)
+) v(code,qty) ON true
+JOIN products p ON p.code=v.code
+WHERE sp.code='WH-PHC'
+  AND NOT EXISTS (
+    SELECT 1 FROM stock_ledger sl
+    WHERE sl.stock_point_id=sp.id AND sl.product_id=p.id AND sl.reference_type='opening_balance_2026'
+  );
+
 
 COMMIT;

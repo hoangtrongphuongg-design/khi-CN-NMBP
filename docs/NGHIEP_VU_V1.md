@@ -285,4 +285,5 @@ Có cơ cấu chi phí, xu hướng, top loại khí, bảng tổng hợp theo l
   - LPG 45 kg: 8 chai
 - Phí thuê vỏ 2.000 đồng/vỏ/ngày áp dụng cho 107 chai khí công nghiệp từ 01/01/2026.
 - LPG được lưu số dư đầu kỳ để đối chiếu nhưng không thuộc nhóm `cylinder_rental_eligible` theo cấu hình hiện tại.
-- Số liệu đầu kỳ này là nợ vỏ tổng với NCC, không phải phân bổ vật lý Kho/Nhóm/Mỏ.
+- Số liệu đầu kỳ này đồng thời được ghi nhận là tồn vật lý Kho Hậu cần tại 01/01/2026 ở bucket `unclassified` (đầu kỳ chưa phân loại đầy/rỗng).
+- Tồn Kho = Đầy + Rỗng + Đầu kỳ chưa phân loại. Khi phát sinh trả NCC, hệ thống ưu tiên trừ Rỗng; nếu Rỗng chưa đủ thì phần còn lại được trừ từ đầu kỳ chưa phân loại và lưu lịch sử rõ ràng.

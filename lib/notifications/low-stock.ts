@@ -15,11 +15,13 @@ export async function checkLowStock(productId: string) {
   await sql.begin(async (tx) => {
     const rows = await tx`
       SELECT p.name,p.unit,t.threshold_qty,t.recipient_email,t.enabled,
-        COALESCE(sb.qty,0)::float8 AS full_qty
+        COALESCE(sb.qty,0)::float8 AS full_qty,
+        COALESCE(su.qty,0)::float8 AS unclassified_qty
       FROM products p
       JOIN low_stock_thresholds t ON t.product_id=p.id
       JOIN stock_points sp ON sp.code='WH-PHC' AND sp.active=true
       LEFT JOIN stock_balances sb ON sb.stock_point_id=sp.id AND sb.product_id=p.id AND sb.bucket='full'
+      LEFT JOIN stock_balances su ON su.stock_point_id=sp.id AND su.product_id=p.id AND su.bucket='unclassified'
       WHERE p.id=${productId}::uuid
       LIMIT 1
     `;
@@ -27,7 +29,20 @@ export async function checkLowStock(productId: string) {
     if (!row || !row.enabled) return;
 
     const qty = Number(row.full_qty || 0);
+    const unclassifiedQty = Number(row.unclassified_qty || 0);
     const threshold = Number(row.threshold_qty || 0);
+
+    // Khi còn số dư đầu kỳ chưa phân loại đầy/rỗng, chưa đủ cơ sở để phát cảnh báo "tồn đầy thấp".
+    // Chỉ bắt đầu chu kỳ cảnh báo sau khi phần đầu kỳ của sản phẩm đó đã được xử lý hết.
+    if (unclassifiedQty > 0) {
+      await tx`
+        INSERT INTO low_stock_states(product_id,is_low,last_qty)
+        VALUES (${productId}::uuid,false,${qty})
+        ON CONFLICT(product_id)
+        DO UPDATE SET is_low=false,last_qty=EXCLUDED.last_qty
+      `;
+      return;
+    }
     const isLow = qty <= threshold;
 
     // Bảo đảm có state rồi khóa state đó trong cùng transaction.

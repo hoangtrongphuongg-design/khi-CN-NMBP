@@ -20,6 +20,7 @@ export async function getGroupQuickData(profile: Profile) {
       COALESCE(gb.qty,0)::float8 AS group_qty,
       COALESCE(wf.qty,0)::float8 AS warehouse_full,
       COALESCE(we.qty,0)::float8 AS warehouse_empty,
+      COALESCE(wu.qty,0)::float8 AS warehouse_unclassified,
       COALESCE(gn.norm_qty,0)::float8 AS norm_qty
     FROM products p
     LEFT JOIN stock_points gp ON gp.group_id=${profile.group_id}::uuid AND gp.active=true
@@ -27,6 +28,7 @@ export async function getGroupQuickData(profile: Profile) {
     LEFT JOIN stock_points wh ON wh.code='WH-PHC' AND wh.active=true
     LEFT JOIN stock_balances wf ON wf.stock_point_id=wh.id AND wf.product_id=p.id AND wf.bucket='full'
     LEFT JOIN stock_balances we ON we.stock_point_id=wh.id AND we.product_id=p.id AND we.bucket='empty'
+    LEFT JOIN stock_balances wu ON wu.stock_point_id=wh.id AND wu.product_id=p.id AND wu.bucket='unclassified'
     LEFT JOIN group_norms gn ON gn.group_id=${profile.group_id}::uuid AND gn.product_id=p.id
     WHERE p.active=true AND p.internal_group_tracking=true
     ORDER BY p.display_order,p.name
@@ -34,7 +36,7 @@ export async function getGroupQuickData(profile: Profile) {
   return rows.map((r: any) => ({
     id: String(r.id), code: String(r.code), name: String(r.name), unit: String(r.unit),
     groupQty: Number(r.group_qty || 0), warehouseFull: Number(r.warehouse_full || 0),
-    warehouseEmpty: Number(r.warehouse_empty || 0), normQty: Number(r.norm_qty || 0),
+    warehouseEmpty: Number(r.warehouse_empty || 0), warehouseUnclassified: Number(r.warehouse_unclassified || 0), normQty: Number(r.norm_qty || 0),
   }));
 }
 

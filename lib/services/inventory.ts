@@ -4,7 +4,7 @@ import type { InventoryRow } from "@/types/app";
 export async function getInventory(): Promise<InventoryRow[]> {
   const rows = await sql<InventoryRow[]>`
     SELECT point_code,point_name,point_kind,product_code,product_name,unit,
-      full_qty::float8 AS full_qty,empty_qty::float8 AS empty_qty,total_qty::float8 AS total_qty,
+      full_qty::float8 AS full_qty,empty_qty::float8 AS empty_qty,unclassified_qty::float8 AS unclassified_qty,total_qty::float8 AS total_qty,
       low_threshold::float8 AS low_threshold
     FROM inventory_status_v
     WHERE point_kind <> 'transit'

@@ -34,6 +34,7 @@ export type InventoryRow = {
   unit: string;
   full_qty: number;
   empty_qty: number;
+  unclassified_qty: number;
   total_qty: number;
   low_threshold?: number | null;
 };

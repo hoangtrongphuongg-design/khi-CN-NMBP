@@ -119,19 +119,83 @@ export async function createSupplierReturn(profile: Profile, input: {
 
       const pointId = loc.code === "MINE" ? mine?.id : wh?.id;
       if (!pointId) throw new Error("Chưa cấu hình điểm tồn để trả vỏ");
-      const bucket = loc.code === "MINE" ? "managed" : product.warehouse_split_full_empty ? "empty" : "available";
-      await applyStockDelta({
-        tx,
-        stockPointId: pointId,
-        productId: line.productId,
-        bucket,
-        delta: -quantity,
-        referenceType: "supplier_return",
-        referenceId: ret.id,
-        actorUserId: profile.id,
-        occurredDate: toDateKey(delivery.delivery_date),
-        note: `Trả vỏ cùng chuyến ${delivery.delivery_code}`,
-      });
+
+      if (loc.code === "MINE") {
+        await applyStockDelta({
+          tx,
+          stockPointId: pointId,
+          productId: line.productId,
+          bucket: "managed",
+          delta: -quantity,
+          referenceType: "supplier_return",
+          referenceId: ret.id,
+          actorUserId: profile.id,
+          occurredDate: toDateKey(delivery.delivery_date),
+          note: `Trả vỏ cùng chuyến ${delivery.delivery_code}`,
+        });
+      } else if (product.warehouse_split_full_empty) {
+        // Tồn đầu kỳ 01/01/2026 chưa có dữ liệu tách đầy/rỗng.
+        // Khi người dùng xác nhận trả vỏ, hành động này chính là bằng chứng số lượng đó
+        // đang được xuất trả NCC: ưu tiên trừ kho "Rỗng", phần thiếu mới trừ "Đầu kỳ chưa phân loại".
+        const balanceRows = await tx`
+          SELECT bucket,qty::float8 AS qty
+          FROM stock_balances
+          WHERE stock_point_id=${pointId}::uuid
+            AND product_id=${line.productId}::uuid
+            AND bucket IN ('empty','unclassified')
+          FOR UPDATE
+        `;
+        const emptyQty = Number((balanceRows as any[]).find((x:any)=>x.bucket==='empty')?.qty || 0);
+        const unclassifiedQty = Number((balanceRows as any[]).find((x:any)=>x.bucket==='unclassified')?.qty || 0);
+        if (quantity > emptyQty + unclassifiedQty + 0.000001) {
+          throw new Error(`${product.name}: số vỏ trả ${quantity} lớn hơn số rỗng + đầu kỳ chưa phân loại trong Kho (${emptyQty + unclassifiedQty})`);
+        }
+
+        const fromEmpty = Math.min(quantity, emptyQty);
+        const fromUnclassified = quantity - fromEmpty;
+
+        if (fromEmpty > 0) {
+          await applyStockDelta({
+            tx,
+            stockPointId: pointId,
+            productId: line.productId,
+            bucket: "empty",
+            delta: -fromEmpty,
+            referenceType: "supplier_return",
+            referenceId: ret.id,
+            actorUserId: profile.id,
+            occurredDate: toDateKey(delivery.delivery_date),
+            note: `Trả vỏ rỗng cùng chuyến ${delivery.delivery_code}`,
+          });
+        }
+        if (fromUnclassified > 0) {
+          await applyStockDelta({
+            tx,
+            stockPointId: pointId,
+            productId: line.productId,
+            bucket: "unclassified",
+            delta: -fromUnclassified,
+            referenceType: "supplier_return",
+            referenceId: ret.id,
+            actorUserId: profile.id,
+            occurredDate: toDateKey(delivery.delivery_date),
+            note: `Trả từ tồn đầu kỳ chưa phân loại cùng chuyến ${delivery.delivery_code}`,
+          });
+        }
+      } else {
+        await applyStockDelta({
+          tx,
+          stockPointId: pointId,
+          productId: line.productId,
+          bucket: "available",
+          delta: -quantity,
+          referenceType: "supplier_return",
+          referenceId: ret.id,
+          actorUserId: profile.id,
+          occurredDate: toDateKey(delivery.delivery_date),
+          note: `Trả vỏ cùng chuyến ${delivery.delivery_code}`,
+        });
+      }
 
       if (["LOX-XL45", "LIN-XL45"].includes(String(product.code)) && quantity > 0) {
         await allocateXL45Return(tx, item.id, line.productId, loc.id, toDateKey(delivery.delivery_date), quantity);

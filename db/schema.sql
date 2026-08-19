@@ -81,6 +81,17 @@ CREATE TABLE IF NOT EXISTS products (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+
+CREATE TABLE IF NOT EXISTS supplier_container_opening_balances (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  product_id uuid NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  opening_date date NOT NULL,
+  qty numeric(14,3) NOT NULL CHECK (qty >= 0),
+  note text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(product_id,opening_date)
+);
+
 CREATE TABLE IF NOT EXISTS group_norms (
   group_id uuid NOT NULL REFERENCES work_groups(id) ON DELETE CASCADE,
   product_id uuid NOT NULL REFERENCES products(id) ON DELETE CASCADE,
@@ -104,7 +115,7 @@ CREATE TABLE IF NOT EXISTS stock_points (
 CREATE TABLE IF NOT EXISTS stock_balances (
   stock_point_id uuid NOT NULL REFERENCES stock_points(id) ON DELETE CASCADE,
   product_id uuid NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-  bucket text NOT NULL CHECK (bucket IN ('full','empty','managed','available','transit')),
+  bucket text NOT NULL CHECK (bucket IN ('full','empty','unclassified','managed','available','transit')),
   qty numeric(14,3) NOT NULL DEFAULT 0 CHECK (qty >= 0),
   updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (stock_point_id, product_id, bucket)
@@ -114,7 +125,7 @@ CREATE TABLE IF NOT EXISTS stock_ledger (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   stock_point_id uuid NOT NULL REFERENCES stock_points(id),
   product_id uuid NOT NULL REFERENCES products(id),
-  bucket text NOT NULL CHECK (bucket IN ('full','empty','managed','available','transit')),
+  bucket text NOT NULL CHECK (bucket IN ('full','empty','unclassified','managed','available','transit')),
   delta numeric(14,3) NOT NULL,
   balance_after numeric(14,3) NOT NULL,
   reference_type text NOT NULL,
@@ -405,9 +416,12 @@ SELECT
   p.unit,
   COALESCE(MAX(CASE WHEN sb.bucket = 'full' THEN sb.qty END), 0)::numeric AS full_qty,
   COALESCE(MAX(CASE WHEN sb.bucket = 'empty' THEN sb.qty END), 0)::numeric AS empty_qty,
+  COALESCE(MAX(CASE WHEN sb.bucket = 'unclassified' THEN sb.qty END), 0)::numeric AS unclassified_qty,
   CASE
     WHEN sp.kind = 'warehouse' AND p.warehouse_split_full_empty THEN
-      (COALESCE(MAX(CASE WHEN sb.bucket = 'full' THEN sb.qty END), 0) + COALESCE(MAX(CASE WHEN sb.bucket = 'empty' THEN sb.qty END), 0))::numeric
+      (COALESCE(MAX(CASE WHEN sb.bucket = 'full' THEN sb.qty END), 0)
+       + COALESCE(MAX(CASE WHEN sb.bucket = 'empty' THEN sb.qty END), 0)
+       + COALESCE(MAX(CASE WHEN sb.bucket = 'unclassified' THEN sb.qty END), 0))::numeric
     WHEN sp.kind = 'group' THEN COALESCE(MAX(CASE WHEN sb.bucket = 'managed' THEN sb.qty END), 0)::numeric
     WHEN sp.kind = 'transit' THEN COALESCE(MAX(CASE WHEN sb.bucket = 'transit' THEN sb.qty END), 0)::numeric
     ELSE COALESCE(MAX(CASE WHEN sb.bucket = 'available' THEN sb.qty END), 0)::numeric

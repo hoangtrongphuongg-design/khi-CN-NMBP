@@ -239,7 +239,7 @@ export async function GET(request: Request) {
       ORDER BY v.point_kind,v.point_name,v.product_name
     `;
     const wsI = wb.addWorksheet("Tồn hiện tại");
-    wsI.columns = excelColumns([["Vị trí/Nhóm","point_name",26],["Loại","product_name",24],["ĐVT","unit",10],["Đầy","full_qty",12],["Rỗng","empty_qty",12],["Tổng","total_qty",12],["Ngưỡng","low_threshold",12]]);
+    wsI.columns = excelColumns([["Vị trí/Nhóm","point_name",26],["Loại","product_name",24],["ĐVT","unit",10],["Đầy","full_qty",12],["Rỗng","empty_qty",12],["Đầu kỳ chưa PL","unclassified_qty",16],["Tổng","total_qty",12],["Ngưỡng","low_threshold",12]]);
     inv.forEach((r:any)=>wsI.addRow(r)); styleSheet(wsI);
 
     const internal = await sql`

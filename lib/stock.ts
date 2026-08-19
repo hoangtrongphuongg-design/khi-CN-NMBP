@@ -1,6 +1,6 @@
 import { sql } from "@/lib/db";
 
-export type StockBucket = "full" | "empty" | "managed" | "available" | "transit";
+export type StockBucket = "full" | "empty" | "unclassified" | "managed" | "available" | "transit";
 
 export async function getStockPointByCode(code: string, tx: any = sql) {
   const rows = await tx`SELECT id,code,name,kind,group_id,location_id FROM stock_points WHERE code=${code} AND active=true LIMIT 1`;
