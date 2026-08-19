@@ -4,7 +4,7 @@ import { sql } from "@/lib/db";
 import {
   getCylinderRentalDaily,
   getGoodsCostDetails,
-  getReportWindow,
+  getDateRangeWindow,
   getXL45RentalDaily,
   summarizeCylinderRental,
   summarizeGoodsCost,
@@ -29,9 +29,7 @@ export async function GET(request: Request) {
   const profile = await requireProfile();
   if (["foreman","supervisor","worker"].includes(profile.role)) return new Response("Forbidden", { status: 403 });
   const url = new URL(request.url);
-  const requestedMonth = /^\d{4}-\d{2}$/.test(url.searchParams.get("month") || "") ? String(url.searchParams.get("month")) : new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).slice(0,7);
-  const reportWindow = getReportWindow(requestedMonth);
-  const month = reportWindow.month;
+  const reportWindow = getDateRangeWindow(url.searchParams.get("start"), url.searchParams.get("end"));
   const start = reportWindow.startDate;
   const endDate = reportWindow.dataEndExclusive;
   const locationId = url.searchParams.get("location") || null;
@@ -125,8 +123,9 @@ export async function GET(request: Request) {
     ORDER BY a.return_date,x.delivered_date
   `;
 
-  // Các nhóm chi phí dùng cùng một mốc thời gian. Với tháng hiện tại, endDate = ngày mai,
-  // nghĩa là chỉ tính đến hết hôm nay và không dự báo các ngày còn lại của tháng.
+  // Tất cả nhóm chi phí dùng cùng khoảng ngày người dùng chọn.
+  // Nếu "Đến ngày" nằm trong tương lai, endDate chỉ dừng ở ngày mai tính từ hôm nay,
+  // nên báo cáo không dự báo chi phí cho các ngày chưa xảy ra.
   const [cylinderRental, goodsCostDetails, xl45RentalDaily] = await Promise.all([
     getCylinderRentalDaily({ startDate: start, endDateExclusive: endDate, productId }),
     getGoodsCostDetails({ startDate: start, endDateExclusive: endDate, productId, locationId, supplierOrgId: supplierClause }),
@@ -142,14 +141,15 @@ export async function GET(request: Request) {
   const cylinderRentalCost = cylinderRental.reduce((sum:number,r:any)=>sum+Number(r.rental_amount || 0),0);
   wsSummary.columns = [{header:"Hạng mục",key:"item",width:34},{header:"Giá trị (VNĐ)",key:"amount",width:20}];
   wsSummary.addRows([
-    {item:`Kỳ tính đến ${reportWindow.asOfDate}`,amount:null},
+    {item:`Khoảng chọn ${reportWindow.requestedStartDate} → ${reportWindow.requestedEndDate}`,amount:null},
+    {item: reportWindow.includesFuture ? `Chi phí thực tế tính đến ${reportWindow.asOfDate}` : `Chi phí thực tế đến ${reportWindow.requestedEndDate}`, amount:null},
     {item:"Tiền mua khí (SL PHC xác nhận × đơn giá ngày giao)",amount:goodsCost},
     {item:"Cước vận chuyển",amount:transportCost},
     {item:"Thuê vỏ chai (tổng vỏ-ngày theo từng loại)",amount:cylinderRentalCost},
     {item:"Phí lưu/thuê bồn XL-45 đã phát sinh",amount:xl45Cost},
     {item:"TỔNG TRƯỚC VAT",amount:goodsCost+transportCost+cylinderRentalCost+xl45Cost},
   ]);
-  styleSheet(wsSummary); wsSummary.getColumn("amount").numFmt="#,##0"; wsSummary.getRow(7).font={bold:true};
+  styleSheet(wsSummary); wsSummary.getColumn("amount").numFmt="#,##0"; wsSummary.getRow(8).font={bold:true};
 
   const wsGoodsCost = wb.addWorksheet("Chi phí mua khí");
   wsGoodsCost.columns = excelColumns([
@@ -272,7 +272,7 @@ export async function GET(request: Request) {
   return new Response(Buffer.from(buffer), {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": `attachment; filename="Khi_NMBP_${month}.xlsx"`,
+      "Content-Disposition": `attachment; filename="Khi_NMBP_${reportWindow.requestedStartDate}_den_${reportWindow.requestedEndDate}.xlsx"`,
       "Cache-Control": "no-store",
     },
   });

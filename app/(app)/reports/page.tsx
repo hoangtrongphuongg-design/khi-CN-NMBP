@@ -22,7 +22,7 @@ import { getLocations, getProducts } from "@/lib/services/catalog";
 import {
   getCylinderRentalDaily,
   getGoodsCostDetails,
-  getReportWindow,
+  getDateRangeWindow,
   getSixMonthCostTrend,
   getTransportCostDetails,
   getXL45RentalDaily,
@@ -82,13 +82,12 @@ function CostCard({
 export default async function ReportsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ month?: string; location?: string; product?: string }>;
+  searchParams: Promise<{ start?: string; end?: string; location?: string; product?: string }>;
 }) {
   const profile = await requireProfile();
   if (["foreman", "supervisor", "worker"].includes(profile.role)) redirect("/dashboard");
   const p = await searchParams;
-  const requestedMonth = /^\d{4}-\d{2}$/.test(p.month || "") ? p.month! : new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).slice(0, 7);
-  const window = getReportWindow(requestedMonth);
+  const window = getDateRangeWindow(p.start, p.end);
   const supplierOrgId = profile.role === "supplier" ? profile.organization_id : null;
 
   const locations = await getLocations();
@@ -119,7 +118,8 @@ export default async function ReportsPage({
     locationId: p.location || null,
     supplierOrgId,
   });
-  const trend = await getSixMonthCostTrend(window.month, supplierOrgId);
+  const trendEndMonth = (window.isAllFuture ? new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }) : window.asOfDate).slice(0, 7);
+  const trend = await getSixMonthCostTrend(trendEndMonth, supplierOrgId);
 
   const goodsSummary = summarizeGoodsCost(goodsRows);
   const rentalSummary = summarizeCylinderRental(rentalDaily);
@@ -158,13 +158,11 @@ export default async function ReportsPage({
     .sort((a, b) => b.total - a.total);
   const maxProductGoods = Math.max(1, ...goodsSummary.map((x) => x.amount));
 
-  const query = new URLSearchParams({ month: window.month });
+  const query = new URLSearchParams({ start: window.requestedStartDate, end: window.requestedEndDate });
   if (p.location) query.set("location", p.location);
   if (p.product) query.set("product", p.product);
 
-  const periodLabel = window.isCurrentMonth
-    ? `01/${window.month.slice(5, 7)}/${window.month.slice(0, 4)} → ${shortDate(window.asOfDate)}`
-    : `${shortDate(window.startDate)} → ${shortDate(new Date(new Date(`${window.calendarEndExclusive}T00:00:00Z`).getTime() - 86400000).toISOString().slice(0, 10))}`;
+  const periodLabel = `${shortDate(window.requestedStartDate)} → ${shortDate(window.requestedEndDate)}`;
 
   return <div className="grid gap-5">
     <header className="flex flex-wrap items-start justify-between gap-4">
@@ -178,9 +176,12 @@ export default async function ReportsPage({
     </header>
 
     <Card className="p-3 md:p-4">
-      <form method="get" className="grid gap-3 md:grid-cols-4 md:items-end">
-        <label className="grid gap-1 text-sm font-bold">Tháng
-          <input className="min-h-10 rounded-lg border border-[var(--border)] bg-white px-3" type="month" name="month" defaultValue={window.month}/>
+      <form method="get" className="grid gap-3 md:grid-cols-5 md:items-end">
+        <label className="grid gap-1 text-sm font-bold">Từ ngày
+          <input className="min-h-10 rounded-lg border border-[var(--border)] bg-white px-3" type="date" name="start" defaultValue={window.requestedStartDate}/>
+        </label>
+        <label className="grid gap-1 text-sm font-bold">Đến ngày
+          <input className="min-h-10 rounded-lg border border-[var(--border)] bg-white px-3" type="date" name="end" defaultValue={window.requestedEndDate}/>
         </label>
         <label className="grid gap-1 text-sm font-bold">Địa điểm
           <Select name="location" defaultValue={p.location || ""}><option value="">Tất cả</option>{locations.map((x: any) => <option key={x.id} value={x.id}>{x.name}</option>)}</Select>
@@ -191,8 +192,9 @@ export default async function ReportsPage({
         <button className="min-h-10 rounded-lg border border-[var(--border)] bg-white px-4 font-bold text-[var(--brand-deep)]" type="submit">Áp dụng bộ lọc</button>
       </form>
       <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-[var(--muted-foreground)]">
-        <CalendarDays size={15}/><strong>Kỳ báo cáo:</strong> {periodLabel}
-        {window.isCurrentMonth ? <Badge tone="info">Tính đến hôm nay, không tính ngày tương lai</Badge> : null}
+        <CalendarDays size={15}/><strong>Khoảng đã chọn:</strong> {periodLabel}
+        {window.includesFuture ? <Badge tone="info">Ngày tương lai không được tính vào chi phí thực tế</Badge> : null}
+        {window.isAllFuture ? <Badge tone="warning">Khoảng chọn chưa có ngày thực tế để tính chi phí</Badge> : null}
       </div>
     </Card>
 
@@ -283,7 +285,7 @@ export default async function ReportsPage({
     </Card></section>
 
     <section id="thue-vo"><Card className="overflow-hidden p-0">
-      <div className="border-b border-[var(--border)] p-4 md:p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><CardTitle>Thuê vỏ theo từng loại khí · {window.month}</CardTitle><p className="mt-1 max-w-3xl text-sm text-[var(--muted-foreground)]">Mỗi ngày lấy số vỏ cuối ngày của từng loại khí. Tổng tiền = Σ (vỏ cuối ngày × đơn giá thuê của ngày đó).</p></div><div className="text-right"><div className="text-xs font-bold uppercase text-[var(--muted-foreground)]">Tổng thuê vỏ</div><div className="font-mono-data text-xl font-extrabold text-[var(--brand-deep)]">{formatCurrency(rentalCost)}</div></div></div><div className="mt-3 flex items-start gap-2 rounded-lg border border-[var(--border)] bg-[var(--paper)] p-3 text-xs text-[var(--muted-foreground)]"><Info size={16} className="mt-0.5 shrink-0 text-[var(--brand)]"/><span>Chỉ giao/trả với NCC làm thay đổi tổng vỏ thuê. Kho ↔ Nhóm và Nhà máy ↔ Mỏ chỉ đổi vị trí giữ vỏ. Tháng hiện tại chỉ tính đến <strong>{shortDate(window.asOfDate)}</strong>.</span></div></div>
+      <div className="border-b border-[var(--border)] p-4 md:p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><CardTitle>Thuê vỏ theo từng loại khí · {periodLabel}</CardTitle><p className="mt-1 max-w-3xl text-sm text-[var(--muted-foreground)]">Mỗi ngày lấy số vỏ cuối ngày của từng loại khí. Tổng tiền = Σ (vỏ cuối ngày × đơn giá thuê của ngày đó).</p></div><div className="text-right"><div className="text-xs font-bold uppercase text-[var(--muted-foreground)]">Tổng thuê vỏ</div><div className="font-mono-data text-xl font-extrabold text-[var(--brand-deep)]">{formatCurrency(rentalCost)}</div></div></div><div className="mt-3 flex items-start gap-2 rounded-lg border border-[var(--border)] bg-[var(--paper)] p-3 text-xs text-[var(--muted-foreground)]"><Info size={16} className="mt-0.5 shrink-0 text-[var(--brand)]"/><span>Chỉ giao/trả với NCC làm thay đổi tổng vỏ thuê. Kho ↔ Nhóm và Nhà máy ↔ Mỏ chỉ đổi vị trí giữ vỏ. Báo cáo cộng số vỏ cuối từng ngày trong đúng khoảng đã chọn; ngày tương lai không được tính.</span></div></div>
       <div className="overflow-x-auto"><table className="mobile-card-table w-full text-sm"><thead className="bg-[var(--muted)]"><tr><th className="p-3 text-left">Loại khí</th><th className="p-3 text-right">Vỏ cuối ngày đầu kỳ</th><th className="p-3 text-right">Vỏ cuối hiện tại/kỳ</th><th className="p-3 text-right">Tổng vỏ-ngày</th><th className="p-3 text-right">Đơn giá/ngày</th><th className="p-3 text-right">Thành tiền</th></tr></thead><tbody>{rentalSummary.map((row) => <tr key={row.product_id} className="border-t border-[var(--border)]"><td data-label="Loại khí" className="p-3"><strong>{row.product_name}</strong><div className="text-xs text-[var(--muted-foreground)]">{row.product_code}</div></td><td data-label="Vỏ cuối ngày đầu kỳ" className="p-3 text-right font-mono-data">{formatNumber(row.opening_qty)}</td><td data-label="Vỏ cuối hiện tại/kỳ" className="p-3 text-right font-mono-data">{formatNumber(row.closing_qty)}</td><td data-label="Tổng vỏ-ngày" className="p-3 text-right font-mono-data font-bold">{formatNumber(row.bottle_days)}</td><td data-label="Đơn giá/ngày" className="p-3 text-right font-mono-data">{moneyRange(row.unit_price_from, row.unit_price_to)}</td><td data-label="Thành tiền" className="p-3 text-right font-mono-data font-extrabold">{formatCurrency(row.rental_amount)}</td></tr>)}</tbody></table></div>
       <details className="border-t border-[var(--border)]"><summary className="cursor-pointer p-4 font-bold text-[var(--brand)]">Xem chi tiết vỏ theo từng ngày</summary><div className="overflow-x-auto px-4 pb-4"><table className="mobile-card-table w-full text-xs"><thead className="bg-[var(--paper)]"><tr><th className="p-2 text-left">Ngày</th><th className="p-2 text-left">Loại khí</th><th className="p-2 text-right">NCC giao</th><th className="p-2 text-right">Trả NCC</th><th className="p-2 text-right">Tăng/giảm</th><th className="p-2 text-right">Vỏ cuối ngày</th><th className="p-2 text-right">Tiền ngày</th></tr></thead><tbody>{rentalDaily.filter((r) => r.held_qty !== 0 || r.supplier_in !== 0 || r.supplier_out !== 0).map((r) => <tr key={`${r.day}-${r.product_id}`} className="border-t border-[var(--border)]"><td data-label="Ngày" className="p-2">{shortDate(r.day)}</td><td data-label="Loại khí" className="p-2"><strong>{r.product_name}</strong></td><td data-label="NCC giao" className="p-2 text-right font-mono-data">{formatNumber(r.supplier_in)}</td><td data-label="Trả NCC" className="p-2 text-right font-mono-data">{formatNumber(r.supplier_out)}</td><td data-label="Tăng/giảm" className="p-2 text-right font-mono-data">{r.net_change > 0 ? "+" : ""}{formatNumber(r.net_change)}</td><td data-label="Vỏ cuối ngày" className="p-2 text-right font-mono-data font-bold">{formatNumber(r.held_qty)}</td><td data-label="Tiền ngày" className="p-2 text-right font-mono-data font-bold">{formatCurrency(r.rental_amount)}</td></tr>)}</tbody></table></div></details>
     </Card></section>

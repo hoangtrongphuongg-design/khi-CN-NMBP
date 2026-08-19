@@ -36,6 +36,52 @@ export function getReportWindow(month: string): ReportWindow {
   return { month: safeMonth, startDate, calendarEndExclusive, dataEndExclusive, asOfDate, isCurrentMonth, isFutureMonth };
 }
 
+
+export type DateRangeWindow = {
+  requestedStartDate: string;
+  requestedEndDate: string;
+  startDate: string;
+  selectedEndDate: string;
+  dataEndExclusive: string;
+  asOfDate: string;
+  includesFuture: boolean;
+  isAllFuture: boolean;
+};
+
+function isValidDateKey(value?: string | null) {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const d = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
+}
+
+export function getDateRangeWindow(startInput?: string | null, endInput?: string | null): DateRangeWindow {
+  const today = toDateInput(new Date());
+  const defaultStart = `${today.slice(0, 7)}-01`;
+  let requestedStartDate = isValidDateKey(startInput) ? String(startInput) : defaultStart;
+  let requestedEndDate = isValidDateKey(endInput) ? String(endInput) : today;
+
+  // Nếu nhập ngược, tự đổi thứ tự để người dùng vẫn xem được báo cáo.
+  if (requestedStartDate > requestedEndDate) {
+    [requestedStartDate, requestedEndDate] = [requestedEndDate, requestedStartDate];
+  }
+
+  const includesFuture = requestedEndDate > today;
+  const isAllFuture = requestedStartDate > today;
+  const effectiveEndDate = requestedEndDate > today ? today : requestedEndDate;
+  const dataEndExclusive = isAllFuture ? requestedStartDate : addDays(effectiveEndDate, 1);
+
+  return {
+    requestedStartDate,
+    requestedEndDate,
+    startDate: requestedStartDate,
+    selectedEndDate: requestedEndDate,
+    dataEndExclusive,
+    asOfDate: effectiveEndDate,
+    includesFuture,
+    isAllFuture,
+  };
+}
+
 export type CylinderRentalDailyRow = {
   day: string;
   product_id: string;
