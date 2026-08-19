@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs";
 import { requireProfile } from "@/lib/auth/session";
 import { sql } from "@/lib/db";
+import { getCylinderRentalDaily, summarizeCylinderRental } from "@/lib/services/costs";
 
 function styleSheet(ws: ExcelJS.Worksheet) {
   const row = ws.getRow(1);
@@ -115,29 +116,10 @@ export async function GET(request: Request) {
     ORDER BY a.return_date,x.delivered_date
   `;
 
-  const cylinderRental = await sql`
-    WITH days AS (
-      SELECT d::date AS day FROM generate_series(${start}::date,(${endDate}::date-interval '1 day')::date,interval '1 day') gs(d)
-    )
-    SELECT days.day,held.held_qty::float8 AS held_qty,COALESCE(pr.unit_price,0)::float8 AS unit_price,
-      (held.held_qty*COALESCE(pr.unit_price,0))::float8 AS rental_amount
-    FROM days
-    CROSS JOIN LATERAL (
-      SELECT GREATEST(0,COALESCE(SUM(sl.delta),0))::numeric AS held_qty
-      FROM stock_ledger sl
-      JOIN products p ON p.id=sl.product_id AND p.cylinder_rental_eligible=true
-      WHERE sl.occurred_at < ((days.day + interval '1 day') AT TIME ZONE 'Asia/Ho_Chi_Minh')
-        AND (${productId}::uuid IS NULL OR sl.product_id=${productId}::uuid)
-    ) held
-    LEFT JOIN LATERAL (
-      SELECT unit_price FROM price_rules
-      WHERE price_type='cylinder_rental_day'
-        AND effective_from<=days.day
-      ORDER BY effective_from DESC,created_at DESC LIMIT 1
-    ) pr ON true
-    WHERE held.held_qty>0
-    ORDER BY days.day
-  `;
+  // Thuê vỏ tính theo từng loại khí, từng ngày (vỏ-ngày).
+  // Không lọc theo địa điểm/nhóm vì luân chuyển nội bộ không làm đổi tổng vỏ thuê NCC.
+  const cylinderRental = await getCylinderRentalDaily({ startDate: start, endDateExclusive: endDate, productId });
+  const cylinderRentalSummary = summarizeCylinderRental(cylinderRental);
 
   const goodsCost = deliveries.reduce((sum:number,r:any)=>sum+Number(r.line_amount || 0),0);
   const transportCost = trips.filter((r:any)=>r.status === "completed").reduce((sum:number,r:any)=>sum+Number(r.transport_amount || 0),0);
@@ -147,15 +129,43 @@ export async function GET(request: Request) {
   wsSummary.addRows([
     {item:"Hàng hóa đã xác nhận",amount:goodsCost},
     {item:"Cước vận chuyển",amount:transportCost},
-    {item:"Thuê vỏ chai theo ngày",amount:cylinderRentalCost},
+    {item:"Thuê vỏ chai (tổng vỏ-ngày theo từng loại)",amount:cylinderRentalCost},
     {item:"Phí lưu/thuê bồn XL-45 đã phát sinh",amount:xl45Cost},
     {item:"TỔNG TRƯỚC VAT",amount:goodsCost+transportCost+cylinderRentalCost+xl45Cost},
   ]);
   styleSheet(wsSummary); wsSummary.getColumn("amount").numFmt="#,##0"; wsSummary.getRow(6).font={bold:true};
 
-  const wsRent = wb.addWorksheet("Thuê vỏ theo ngày");
-  wsRent.columns = [{header:"Ngày",key:"day",width:13},{header:"Tổng vỏ tính thuê",key:"held_qty",width:20},{header:"Đơn giá/vỏ/ngày",key:"unit_price",width:18},{header:"Thành tiền",key:"rental_amount",width:18}];
-  cylinderRental.forEach((r:any)=>wsRent.addRow(r)); styleSheet(wsRent); wsRent.getColumn("unit_price").numFmt="#,##0"; wsRent.getColumn("rental_amount").numFmt="#,##0";
+  const wsRentSummary = wb.addWorksheet("Thuê vỏ - Tổng hợp");
+  wsRentSummary.columns = excelColumns([
+    ["Loại khí","product_name",24],
+    ["Mã","product_code",12],
+    ["Số vỏ ngày đầu tháng","opening_qty",20],
+    ["Số vỏ ngày cuối tháng","closing_qty",20],
+    ["Tổng vỏ-ngày","bottle_days",16],
+    ["Đơn giá đầu kỳ","unit_price_from",18],
+    ["Đơn giá cuối kỳ","unit_price_to",18],
+    ["Thành tiền","rental_amount",18],
+    ["Ngày thiếu đơn giá","missing_price_days",18],
+  ]);
+  cylinderRentalSummary.forEach((r)=>wsRentSummary.addRow(r));
+  styleSheet(wsRentSummary);
+  wsRentSummary.getColumn("unit_price_from").numFmt="#,##0";
+  wsRentSummary.getColumn("unit_price_to").numFmt="#,##0";
+  wsRentSummary.getColumn("rental_amount").numFmt="#,##0";
+
+  const wsRentDaily = wb.addWorksheet("Thuê vỏ - Theo ngày");
+  wsRentDaily.columns = excelColumns([
+    ["Ngày","day",13],
+    ["Loại khí","product_name",24],
+    ["Mã","product_code",12],
+    ["Số vỏ cuối ngày","held_qty",18],
+    ["Đơn giá/vỏ/ngày","unit_price",18],
+    ["Thành tiền ngày","rental_amount",18],
+  ]);
+  cylinderRental.forEach((r)=>wsRentDaily.addRow(r));
+  styleSheet(wsRentDaily);
+  wsRentDaily.getColumn("unit_price").numFmt="#,##0";
+  wsRentDaily.getColumn("rental_amount").numFmt="#,##0";
 
   if (profile.role !== "supplier") {
     const inv = await sql`
