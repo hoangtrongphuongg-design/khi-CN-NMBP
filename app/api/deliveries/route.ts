@@ -11,6 +11,7 @@ export async function POST(request: Request) {
   const profile = await requireProfile();
   const form = await request.formData();
   const action = String(form.get("action") || "");
+  let tab = "deliveries";
   try {
     if (action === "create_delivery") {
       const lines = JSON.parse(String(form.get("lines") || "[]"));
@@ -34,6 +35,7 @@ export async function POST(request: Request) {
     } else if (action === "finalize_delivery_phc") {
       await finalizeDeliveryByPhc(profile, String(form.get("delivery_id")));
     } else if (action === "create_supplier_return") {
+      tab = "returns";
       const lines = JSON.parse(String(form.get("lines") || "[]"));
       await createSupplierReturn(profile, {
         returnDate: String(form.get("return_date")),
@@ -43,14 +45,15 @@ export async function POST(request: Request) {
         note: String(form.get("note") || ""),
       });
     } else if (action === "confirm_supplier_return") {
+      tab = "returns";
       const itemActuals = JSON.parse(String(form.get("item_actuals") || "[]"));
       await confirmSupplierReturn(profile, String(form.get("return_id")), itemActuals, String(form.get("feedback") || ""));
     } else {
       throw new Error("Hành động không hợp lệ");
     }
-    return back(request, "ok=1");
+    return back(request, `tab=${tab}&ok=1`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return back(request, `error=${encodeURIComponent(message)}`);
+    return back(request, `tab=${tab}&error=${encodeURIComponent(message)}`);
   }
 }

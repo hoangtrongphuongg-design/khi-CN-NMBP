@@ -216,6 +216,22 @@ export async function createPriceVersion(profile: Profile, input: { priceType: P
         ${input.note || null},${profile.id}::uuid)
       RETURNING id
     `;
+    // Nếu trước đây PHC đã hoàn tất Phiếu khi chưa có đơn giá, bổ sung giá cho đúng
+    // khoảng hiệu lực vừa tạo. Chỉ backfill các dòng chưa có snapshot giá.
+    if (input.priceType === "product" && productId) {
+      await tx`
+        UPDATE supplier_delivery_items di
+        SET price_rule_id=${row.id}::uuid,
+            unit_price=${input.unitPrice},
+            line_amount=(COALESCE(di.confirmed_qty,0) * ${input.unitPrice})
+        FROM supplier_deliveries d
+        WHERE d.id=di.delivery_id
+          AND di.product_id=${productId}::uuid
+          AND di.unit_price IS NULL
+          AND d.delivery_date>=${input.effectiveFrom}::date
+          AND (${nextRule?.effective_from ? toDateKey(nextRule.effective_from) : null}::date IS NULL OR d.delivery_date<${nextRule?.effective_from ? toDateKey(nextRule.effective_from) : null}::date)
+      `;
+    }
     await audit({ tx, actorUserId: profile.id, action: "create_version", entityType: "price_rule", entityId: row.id, after: input });
   });
 }

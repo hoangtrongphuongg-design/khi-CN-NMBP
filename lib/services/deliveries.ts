@@ -157,7 +157,6 @@ export async function finalizeDeliveryByPhc(profile: Profile, deliveryId: string
     `;
     if (!delivery) throw new Error("Không tìm thấy Phiếu giao");
     if (delivery.status === "completed") throw new Error("Phiếu giao đã hoàn tất");
-    if (delivery.status !== "phc_pending") throw new Error("Phiếu chưa đủ xác nhận XSC để chuyển PHC");
 
     const items = await tx`
       SELECT di.*,l.code AS location_code,p.code AS product_code,p.name AS product_name,
@@ -170,60 +169,89 @@ export async function finalizeDeliveryByPhc(profile: Profile, deliveryId: string
       FOR UPDATE OF di
     `;
     if (!items.length) throw new Error("Phiếu giao không có dòng hàng");
-    if (items.some((item: any) => item.status !== "xsc_confirmed")) throw new Error("Còn dòng chưa được XSC xác nhận");
 
+    const feedbackCount = (items as any[]).filter((item) => item.status === "feedback").length;
+    const pendingCount = (items as any[]).filter((item) => item.status === "pending").length;
+    const invalidCount = (items as any[]).filter((item) => !["xsc_confirmed", "confirmed", "feedback", "pending"].includes(item.status)).length;
+    if (feedbackCount > 0) throw new Error(`Còn ${feedbackCount} dòng đang có phản hồi, chưa thể PHC hoàn tất`);
+    if (pendingCount > 0) throw new Error(`Còn ${pendingCount} dòng chưa được XSC xác nhận`);
+    if (invalidCount > 0) throw new Error("Trạng thái dòng giao chưa hợp lệ để PHC hoàn tất");
+
+    // Không phụ thuộc trạng thái cha bị trễ. Nếu tất cả dòng đã XSC xác nhận thì PHC được hoàn tất.
     const deliveryDate = toDateKey(delivery.delivery_date);
-    const pricedItems: Array<{ id: string; productId: string; actualQty: number; unitPrice: number; amount: number; priceRuleId: string }> = [];
+    const pricedItems: Array<{
+      id: string;
+      productId: string;
+      actualQty: number;
+      unitPrice: number | null;
+      amount: number | null;
+      priceRuleId: string | null;
+      priceMissing: boolean;
+    }> = [];
+
     for (const item of items as any[]) {
       const actualQty = Number(item.confirmed_qty ?? 0);
       const price = await resolvePriceRule("product", deliveryDate, item.product_id, tx);
-      if (!price) throw new Error(`Chưa cấu hình đơn giá có hiệu lực cho ${item.product_name} tại ngày ${deliveryDate}`);
-      const unitPrice = Number(price.unit_price ?? 0);
-      pricedItems.push({ id: item.id, productId: item.product_id, actualQty, unitPrice, amount: unitPrice * actualQty, priceRuleId: price.id });
+      const unitPrice = price ? Number(price.unit_price ?? 0) : null;
+      pricedItems.push({
+        id: item.id,
+        productId: item.product_id,
+        actualQty,
+        unitPrice,
+        amount: unitPrice == null ? null : unitPrice * actualQty,
+        priceRuleId: price?.id ?? null,
+        priceMissing: !price,
+      });
     }
 
     for (let index = 0; index < items.length; index += 1) {
       const item: any = items[index];
       const priced = pricedItems[index];
 
-      if (item.location_code === "PLANT" && item.returnable_container) {
-        const wh = await getStockPointByCode("WH-PHC", tx);
-        const bucket = item.warehouse_split_full_empty ? "full" : "available";
-        await applyStockDelta({
-          tx,
-          stockPointId: wh.id,
-          productId: item.product_id,
-          bucket,
-          delta: priced.actualQty,
-          referenceType: "supplier_delivery",
-          referenceId: deliveryId,
-          actorUserId: profile.id,
-          occurredDate: deliveryDate,
-        });
-        if (bucket === "full") lowStockProductIds.add(item.product_id);
-      } else if (item.location_code === "MINE" && item.returnable_container) {
-        const mineRows = await tx`SELECT sp.id FROM stock_points sp JOIN work_groups g ON g.id=sp.group_id WHERE g.code='COI' LIMIT 1`;
-        if (!mineRows[0]) throw new Error("Chưa cấu hình điểm tồn Nhóm Cối/Mỏ");
-        await applyStockDelta({
-          tx,
-          stockPointId: mineRows[0].id,
-          productId: item.product_id,
-          bucket: "managed",
-          delta: priced.actualQty,
-          referenceType: "supplier_delivery_mine",
-          referenceId: deliveryId,
-          actorUserId: profile.id,
-          occurredDate: deliveryDate,
-        });
+      // Dòng đã confirmed chỉ có thể phát sinh từ một lần hoàn tất trước đó; không cộng tồn lần hai.
+      if (item.status !== "confirmed") {
+        if (item.location_code === "PLANT" && item.returnable_container) {
+          const wh = await getStockPointByCode("WH-PHC", tx);
+          const bucket = item.warehouse_split_full_empty ? "full" : "available";
+          await applyStockDelta({
+            tx,
+            stockPointId: wh.id,
+            productId: item.product_id,
+            bucket,
+            delta: priced.actualQty,
+            referenceType: "supplier_delivery",
+            referenceId: deliveryId,
+            actorUserId: profile.id,
+            occurredDate: deliveryDate,
+          });
+          if (bucket === "full") lowStockProductIds.add(item.product_id);
+        } else if (item.location_code === "MINE" && item.returnable_container) {
+          const mineRows = await tx`SELECT sp.id FROM stock_points sp JOIN work_groups g ON g.id=sp.group_id WHERE g.code='COI' LIMIT 1`;
+          if (!mineRows[0]) throw new Error("Chưa cấu hình điểm tồn Nhóm Cối/Mỏ");
+          await applyStockDelta({
+            tx,
+            stockPointId: mineRows[0].id,
+            productId: item.product_id,
+            bucket: "managed",
+            delta: priced.actualQty,
+            referenceType: "supplier_delivery_mine",
+            referenceId: deliveryId,
+            actorUserId: profile.id,
+            occurredDate: deliveryDate,
+          });
+        }
       }
 
       await tx`
         UPDATE supplier_delivery_items
-        SET status='confirmed',price_rule_id=${priced.priceRuleId}::uuid,unit_price=${priced.unitPrice},line_amount=${priced.amount}
+        SET status='confirmed',
+            price_rule_id=${priced.priceRuleId}::uuid,
+            unit_price=${priced.unitPrice},
+            line_amount=${priced.amount}
         WHERE id=${item.id}::uuid
       `;
 
-      if (["LOX-XL45","LIN-XL45"].includes(item.product_code) && priced.actualQty > 0) {
+      if (["LOX-XL45", "LIN-XL45"].includes(item.product_code) && priced.actualQty > 0) {
         await tx`
           INSERT INTO xl45_lots(delivery_item_id,product_id,location_id,delivered_date,qty_received,qty_outstanding)
           VALUES (${item.id}::uuid,${item.product_id}::uuid,${item.destination_location_id}::uuid,${deliveryDate}::date,${priced.actualQty},${priced.actualQty})
@@ -244,7 +272,10 @@ export async function finalizeDeliveryByPhc(profile: Profile, deliveryId: string
       action: "phc_confirm",
       entityType: "supplier_delivery",
       entityId: deliveryId,
-      after: { items: pricedItems },
+      after: {
+        items: pricedItems,
+        missingPriceItems: pricedItems.filter((x) => x.priceMissing).map((x) => x.productId),
+      },
     });
   });
 
@@ -253,29 +284,47 @@ export async function finalizeDeliveryByPhc(profile: Profile, deliveryId: string
 
 export async function listDeliveries(profile: Profile) {
   const supplierFilter = profile.role === "supplier" && profile.organization_id ? profile.organization_id : null;
-  if (supplierFilter) {
-    return sql`
-      SELECT d.id,d.delivery_code,d.delivery_date,d.status,d.note,d.phc_confirmed_at,t.trip_code,t.trip_kind,t.transport_amount::float8 AS transport_amount,o.name AS supplier_name,
-        COALESCE(json_agg(json_build_object('id',di.id,'product_name',p.name,'unit',p.unit,'location_code',l.code,'location_name',l.name,'declared_qty',di.declared_qty,'confirmed_qty',di.confirmed_qty,'status',di.status,'feedback',di.feedback) ORDER BY l.code,p.display_order),'[]'::json) AS items
-      FROM supplier_deliveries d
-      JOIN organizations o ON o.id=d.supplier_org_id
-      LEFT JOIN transport_trips t ON t.id=d.trip_id
-      LEFT JOIN supplier_delivery_items di ON di.delivery_id=d.id
-      LEFT JOIN products p ON p.id=di.product_id
-      LEFT JOIN locations l ON l.id=di.destination_location_id
-      WHERE d.supplier_org_id=${supplierFilter}::uuid
-      GROUP BY d.id,t.id,o.name ORDER BY d.delivery_date DESC,d.created_at DESC LIMIT 100
-    `;
-  }
-  return sql`
-    SELECT d.id,d.delivery_code,d.delivery_date,d.status,d.note,d.phc_confirmed_at,t.trip_code,t.trip_kind,t.transport_amount::float8 AS transport_amount,o.name AS supplier_name,
-      COALESCE(json_agg(json_build_object('id',di.id,'product_name',p.name,'unit',p.unit,'location_code',l.code,'location_name',l.name,'declared_qty',di.declared_qty,'confirmed_qty',di.confirmed_qty,'status',di.status,'feedback',di.feedback) ORDER BY l.code,p.display_order),'[]'::json) AS items
+  const query = supplierFilter ? sql`
+    SELECT d.id,d.delivery_code,d.delivery_date,d.status,d.note,d.phc_confirmed_at,
+      phc.full_name AS phc_confirmed_by_name,
+      t.trip_code,t.trip_kind,t.transport_amount::float8 AS transport_amount,o.name AS supplier_name,
+      COALESCE(json_agg(json_build_object(
+        'id',di.id,'product_name',p.name,'unit',p.unit,'location_code',l.code,'location_name',l.name,
+        'declared_qty',di.declared_qty,'confirmed_qty',di.confirmed_qty,'status',di.status,'feedback',di.feedback,
+        'confirmed_by_name',uc.full_name,'confirmed_at',di.confirmed_at,
+        'unit_price',di.unit_price,'line_amount',di.line_amount
+      ) ORDER BY l.code,p.display_order) FILTER (WHERE di.id IS NOT NULL),'[]'::json) AS items
     FROM supplier_deliveries d
     JOIN organizations o ON o.id=d.supplier_org_id
+    LEFT JOIN users phc ON phc.id=d.phc_confirmed_by
     LEFT JOIN transport_trips t ON t.id=d.trip_id
     LEFT JOIN supplier_delivery_items di ON di.delivery_id=d.id
     LEFT JOIN products p ON p.id=di.product_id
     LEFT JOIN locations l ON l.id=di.destination_location_id
-    GROUP BY d.id,t.id,o.name ORDER BY d.delivery_date DESC,d.created_at DESC LIMIT 100
+    LEFT JOIN users uc ON uc.id=di.confirmed_by
+    WHERE d.supplier_org_id=${supplierFilter}::uuid
+    GROUP BY d.id,t.id,o.name,phc.full_name
+    ORDER BY d.delivery_date DESC,d.created_at DESC LIMIT 100
+  ` : sql`
+    SELECT d.id,d.delivery_code,d.delivery_date,d.status,d.note,d.phc_confirmed_at,
+      phc.full_name AS phc_confirmed_by_name,
+      t.trip_code,t.trip_kind,t.transport_amount::float8 AS transport_amount,o.name AS supplier_name,
+      COALESCE(json_agg(json_build_object(
+        'id',di.id,'product_name',p.name,'unit',p.unit,'location_code',l.code,'location_name',l.name,
+        'declared_qty',di.declared_qty,'confirmed_qty',di.confirmed_qty,'status',di.status,'feedback',di.feedback,
+        'confirmed_by_name',uc.full_name,'confirmed_at',di.confirmed_at,
+        'unit_price',di.unit_price,'line_amount',di.line_amount
+      ) ORDER BY l.code,p.display_order) FILTER (WHERE di.id IS NOT NULL),'[]'::json) AS items
+    FROM supplier_deliveries d
+    JOIN organizations o ON o.id=d.supplier_org_id
+    LEFT JOIN users phc ON phc.id=d.phc_confirmed_by
+    LEFT JOIN transport_trips t ON t.id=d.trip_id
+    LEFT JOIN supplier_delivery_items di ON di.delivery_id=d.id
+    LEFT JOIN products p ON p.id=di.product_id
+    LEFT JOIN locations l ON l.id=di.destination_location_id
+    LEFT JOIN users uc ON uc.id=di.confirmed_by
+    GROUP BY d.id,t.id,o.name,phc.full_name
+    ORDER BY d.delivery_date DESC,d.created_at DESC LIMIT 100
   `;
+  return query;
 }
