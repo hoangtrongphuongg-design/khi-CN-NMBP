@@ -2,6 +2,7 @@ import { sql } from "@/lib/db";
 import type { Profile } from "@/types/app";
 import { applyStockDelta, audit, getStockPointByCode } from "@/lib/stock";
 import { resolvePriceRule, tripPriceType } from "@/lib/pricing";
+import { toDateKey } from "@/lib/utils";
 
 function stamp(prefix: string, id: string, date: string) {
   return `${prefix}-${date.replaceAll("-", "")}-${id.slice(0, 6).toUpperCase()}`;
@@ -23,10 +24,10 @@ async function allocateXL45Return(tx: any, supplierReturnItemId: string, product
       SELECT COUNT(*)::int AS charge_days, COALESCE(SUM((
         SELECT pr.unit_price FROM price_rules pr
         WHERE pr.price_type='xl45_rental_day'
-          AND pr.effective_from<=d::date AND (pr.effective_to IS NULL OR pr.effective_to>=d::date)
+          AND pr.effective_from<=d::date
         ORDER BY pr.effective_from DESC LIMIT 1
       )),0)::float8 AS amount_per_bon
-      FROM generate_series(${String(lot.delivered_date).slice(0,10)}::date + interval '15 day',${returnDate}::date,interval '1 day') AS gs(d)
+      FROM generate_series(${toDateKey(lot.delivered_date)}::date + interval '15 day',${returnDate}::date,interval '1 day') AS gs(d)
     `;
     const rentalAmount = Number(cost?.amount_per_bon ?? 0) * take;
     await tx`
@@ -75,7 +76,7 @@ export async function createSupplierReturn(profile: Profile, input: {
     } else {
       const [linkedTrip] = await tx`SELECT trip_date,supplier_org_id,co2_liquid_special FROM transport_trips WHERE id=${tripId}::uuid FOR UPDATE`;
       if (!linkedTrip) throw new Error("Không tìm thấy chuyến đã chọn");
-      if (String(linkedTrip.trip_date).slice(0,10) !== input.returnDate) throw new Error("Phiếu trả vỏ chỉ được ghép vào chuyến cùng ngày");
+      if (toDateKey(linkedTrip.trip_date) !== input.returnDate) throw new Error("Phiếu trả vỏ chỉ được ghép vào chuyến cùng ngày");
       if (linkedTrip.supplier_org_id && linkedTrip.supplier_org_id !== supplier.id) throw new Error("Chuyến không thuộc NCC này");
       if (loc.code === "MINE" && !linkedTrip.co2_liquid_special) {
       const price = await resolvePriceRule("trip_mine", input.returnDate, null, tx);
@@ -130,9 +131,9 @@ export async function confirmSupplierReturn(profile: Profile, returnId: string, 
       const bucket = ret.location_code === "MINE" ? "managed" : item.warehouse_split_full_empty ? "empty" : "available";
       const pointId = ret.location_code === "MINE" ? mine?.id : wh.id;
       if (!pointId) throw new Error("Chưa cấu hình điểm tồn");
-      await applyStockDelta({ tx, stockPointId: pointId, productId: item.product_id, bucket, delta: -actual.quantity, referenceType: "supplier_return", referenceId: returnId, actorUserId: profile.id, occurredDate: String(ret.return_date).slice(0,10) });
+      await applyStockDelta({ tx, stockPointId: pointId, productId: item.product_id, bucket, delta: -actual.quantity, referenceType: "supplier_return", referenceId: returnId, actorUserId: profile.id, occurredDate: toDateKey(ret.return_date) });
       if (["LOX-XL45","LIN-XL45"].includes(item.product_code) && actual.quantity > 0) {
-        await allocateXL45Return(tx, item.id, item.product_id, ret.source_location_id, String(ret.return_date).slice(0,10), actual.quantity);
+        await allocateXL45Return(tx, item.id, item.product_id, ret.source_location_id, toDateKey(ret.return_date), actual.quantity);
       }
       await tx`
         UPDATE supplier_return_items SET confirmed_qty=${actual.quantity},status=${Number(actual.quantity) === Number(item.declared_qty) ? "confirmed" : "feedback"},feedback=${Number(actual.quantity) === Number(item.declared_qty) ? null : feedback || "Số lượng NCC nhận khác số khai trả"}

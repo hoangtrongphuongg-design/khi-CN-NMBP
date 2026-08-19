@@ -132,7 +132,7 @@ export async function GET(request: Request) {
     LEFT JOIN LATERAL (
       SELECT unit_price FROM price_rules
       WHERE price_type='cylinder_rental_day'
-        AND effective_from<=days.day AND (effective_to IS NULL OR effective_to>=days.day)
+        AND effective_from<=days.day
       ORDER BY effective_from DESC,created_at DESC LIMIT 1
     ) pr ON true
     WHERE held.held_qty>0

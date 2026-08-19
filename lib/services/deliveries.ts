@@ -9,6 +9,7 @@ import {
 import { applyStockDelta, audit, getStockPointByCode } from "@/lib/stock";
 import { resolvePriceRule, tripPriceType } from "@/lib/pricing";
 import { checkLowStock } from "@/lib/notifications/low-stock";
+import { toDateKey } from "@/lib/utils";
 
 export type DeliveryLineInput = { productId: string; destinationLocationId: string; quantity: number };
 
@@ -171,11 +172,12 @@ export async function finalizeDeliveryByPhc(profile: Profile, deliveryId: string
     if (!items.length) throw new Error("Phiếu giao không có dòng hàng");
     if (items.some((item: any) => item.status !== "xsc_confirmed")) throw new Error("Còn dòng chưa được XSC xác nhận");
 
+    const deliveryDate = toDateKey(delivery.delivery_date);
     const pricedItems: Array<{ id: string; productId: string; actualQty: number; unitPrice: number; amount: number; priceRuleId: string }> = [];
     for (const item of items as any[]) {
       const actualQty = Number(item.confirmed_qty ?? 0);
-      const price = await resolvePriceRule("product", String(delivery.delivery_date).slice(0,10), item.product_id, tx);
-      if (!price) throw new Error(`Chưa cấu hình đơn giá có hiệu lực cho ${item.product_name}`);
+      const price = await resolvePriceRule("product", deliveryDate, item.product_id, tx);
+      if (!price) throw new Error(`Chưa cấu hình đơn giá có hiệu lực cho ${item.product_name} tại ngày ${deliveryDate}`);
       const unitPrice = Number(price.unit_price ?? 0);
       pricedItems.push({ id: item.id, productId: item.product_id, actualQty, unitPrice, amount: unitPrice * actualQty, priceRuleId: price.id });
     }
@@ -196,7 +198,7 @@ export async function finalizeDeliveryByPhc(profile: Profile, deliveryId: string
           referenceType: "supplier_delivery",
           referenceId: deliveryId,
           actorUserId: profile.id,
-          occurredDate: String(delivery.delivery_date).slice(0,10),
+          occurredDate: deliveryDate,
         });
         if (bucket === "full") lowStockProductIds.add(item.product_id);
       } else if (item.location_code === "MINE" && item.returnable_container) {
@@ -211,7 +213,7 @@ export async function finalizeDeliveryByPhc(profile: Profile, deliveryId: string
           referenceType: "supplier_delivery_mine",
           referenceId: deliveryId,
           actorUserId: profile.id,
-          occurredDate: String(delivery.delivery_date).slice(0,10),
+          occurredDate: deliveryDate,
         });
       }
 
@@ -224,7 +226,7 @@ export async function finalizeDeliveryByPhc(profile: Profile, deliveryId: string
       if (["LOX-XL45","LIN-XL45"].includes(item.product_code) && priced.actualQty > 0) {
         await tx`
           INSERT INTO xl45_lots(delivery_item_id,product_id,location_id,delivered_date,qty_received,qty_outstanding)
-          VALUES (${item.id}::uuid,${item.product_id}::uuid,${item.destination_location_id}::uuid,${String(delivery.delivery_date).slice(0,10)}::date,${priced.actualQty},${priced.actualQty})
+          VALUES (${item.id}::uuid,${item.product_id}::uuid,${item.destination_location_id}::uuid,${deliveryDate}::date,${priced.actualQty},${priced.actualQty})
           ON CONFLICT(delivery_item_id) DO NOTHING
         `;
       }

@@ -10,7 +10,7 @@ export async function getXL45Outstanding() {
         SELECT SUM((
           SELECT pr.unit_price FROM price_rules pr
           WHERE pr.price_type='xl45_rental_day'
-            AND pr.effective_from<=d::date AND (pr.effective_to IS NULL OR pr.effective_to>=d::date)
+            AND pr.effective_from<=d::date
           ORDER BY pr.effective_from DESC LIMIT 1
         ))
         FROM generate_series(x.delivered_date+interval '15 day',CURRENT_DATE,interval '1 day') gs(d)

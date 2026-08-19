@@ -19,3 +19,19 @@ export function toDateInput(value: Date | string = new Date()) {
   const d = typeof value === "string" ? new Date(value) : value;
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(d);
 }
+
+
+/** Normalize PostgreSQL DATE / JS Date / ISO-ish values to YYYY-MM-DD in VN timezone. */
+export function toDateKey(value: unknown) {
+  if (value instanceof Date) {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(value);
+  }
+  const raw = String(value ?? "").trim();
+  const direct = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (direct) return direct[1];
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(parsed);
+  }
+  throw new Error(`Ngày nghiệp vụ không hợp lệ: ${raw || "(trống)"}`);
+}

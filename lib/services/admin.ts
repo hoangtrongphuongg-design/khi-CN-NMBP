@@ -4,6 +4,7 @@ import { audit } from "@/lib/stock";
 import { closePreviousPriceRule, type PriceType } from "@/lib/pricing";
 import type { Profile, AppRole } from "@/types/app";
 import { checkLowStock } from "@/lib/notifications/low-stock";
+import { toDateKey } from "@/lib/utils";
 
 function assertAdmin(profile: Profile) {
   if (profile.role !== "admin") throw new Error("Chỉ Admin được thay đổi cấu hình hệ thống");
@@ -211,7 +212,7 @@ export async function createPriceVersion(profile: Profile, input: { priceType: P
     const [row] = await tx`
       INSERT INTO price_rules(contract_id,price_type,product_id,unit,unit_price,effective_from,effective_to,note,created_by)
       VALUES (${input.contractId || null}::uuid,${input.priceType},${productId}::uuid,${input.unit},${input.unitPrice},${input.effectiveFrom}::date,
-        CASE WHEN ${nextRule?.effective_from ? String(nextRule.effective_from).slice(0,10) : null}::date IS NULL THEN NULL ELSE (${nextRule?.effective_from ? String(nextRule.effective_from).slice(0,10) : null}::date - interval '1 day')::date END,
+        CASE WHEN ${nextRule?.effective_from ? toDateKey(nextRule.effective_from) : null}::date IS NULL THEN NULL ELSE (${nextRule?.effective_from ? toDateKey(nextRule.effective_from) : null}::date - interval '1 day')::date END,
         ${input.note || null},${profile.id}::uuid)
       RETURNING id
     `;
