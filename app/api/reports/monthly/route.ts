@@ -1,7 +1,15 @@
 import ExcelJS from "exceljs";
 import { requireProfile } from "@/lib/auth/session";
 import { sql } from "@/lib/db";
-import { getCylinderRentalDaily, summarizeCylinderRental } from "@/lib/services/costs";
+import {
+  getCylinderRentalDaily,
+  getGoodsCostDetails,
+  getReportWindow,
+  getXL45RentalDaily,
+  summarizeCylinderRental,
+  summarizeGoodsCost,
+  summarizeXL45Rental,
+} from "@/lib/services/costs";
 
 function styleSheet(ws: ExcelJS.Worksheet) {
   const row = ws.getRow(1);
@@ -21,10 +29,11 @@ export async function GET(request: Request) {
   const profile = await requireProfile();
   if (["foreman","supervisor","worker"].includes(profile.role)) return new Response("Forbidden", { status: 403 });
   const url = new URL(request.url);
-  const month = /^\d{4}-\d{2}$/.test(url.searchParams.get("month") || "") ? String(url.searchParams.get("month")) : new Date().toISOString().slice(0,7);
-  const start = `${month}-01`;
-  const end = new Date(`${start}T00:00:00Z`); end.setUTCMonth(end.getUTCMonth()+1);
-  const endDate = end.toISOString().slice(0,10);
+  const requestedMonth = /^\d{4}-\d{2}$/.test(url.searchParams.get("month") || "") ? String(url.searchParams.get("month")) : new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).slice(0,7);
+  const reportWindow = getReportWindow(requestedMonth);
+  const month = reportWindow.month;
+  const start = reportWindow.startDate;
+  const endDate = reportWindow.dataEndExclusive;
   const locationId = url.searchParams.get("location") || null;
   const productId = url.searchParams.get("product") || null;
   const groupId = url.searchParams.get("group") || null;
@@ -116,31 +125,60 @@ export async function GET(request: Request) {
     ORDER BY a.return_date,x.delivered_date
   `;
 
-  // Thuê vỏ tính theo từng loại khí, từng ngày (vỏ-ngày).
-  // Không lọc theo địa điểm/nhóm vì luân chuyển nội bộ không làm đổi tổng vỏ thuê NCC.
-  const cylinderRental = await getCylinderRentalDaily({ startDate: start, endDateExclusive: endDate, productId });
+  // Các nhóm chi phí dùng cùng một mốc thời gian. Với tháng hiện tại, endDate = ngày mai,
+  // nghĩa là chỉ tính đến hết hôm nay và không dự báo các ngày còn lại của tháng.
+  const [cylinderRental, goodsCostDetails, xl45RentalDaily] = await Promise.all([
+    getCylinderRentalDaily({ startDate: start, endDateExclusive: endDate, productId }),
+    getGoodsCostDetails({ startDate: start, endDateExclusive: endDate, productId, locationId, supplierOrgId: supplierClause }),
+    getXL45RentalDaily({ startDate: start, endDateExclusive: endDate, productId, locationId, supplierOrgId: supplierClause }),
+  ]);
   const cylinderRentalSummary = summarizeCylinderRental(cylinderRental);
+  const goodsCostSummary = summarizeGoodsCost(goodsCostDetails);
+  const xl45RentalSummary = summarizeXL45Rental(xl45RentalDaily);
 
-  const goodsCost = deliveries.reduce((sum:number,r:any)=>sum+Number(r.line_amount || 0),0);
+  const goodsCost = goodsCostDetails.reduce((sum:number,r:any)=>sum+Number(r.amount || 0),0);
   const transportCost = trips.filter((r:any)=>r.status === "completed").reduce((sum:number,r:any)=>sum+Number(r.transport_amount || 0),0);
-  const xl45Cost = xl45.reduce((sum:number,r:any)=>sum+Number(r.rental_amount || 0),0);
+  const xl45Cost = xl45RentalDaily.reduce((sum:number,r:any)=>sum+Number(r.rental_amount || 0),0);
   const cylinderRentalCost = cylinderRental.reduce((sum:number,r:any)=>sum+Number(r.rental_amount || 0),0);
   wsSummary.columns = [{header:"Hạng mục",key:"item",width:34},{header:"Giá trị (VNĐ)",key:"amount",width:20}];
   wsSummary.addRows([
-    {item:"Hàng hóa đã xác nhận",amount:goodsCost},
+    {item:`Kỳ tính đến ${reportWindow.asOfDate}`,amount:null},
+    {item:"Tiền mua khí (SL PHC xác nhận × đơn giá ngày giao)",amount:goodsCost},
     {item:"Cước vận chuyển",amount:transportCost},
     {item:"Thuê vỏ chai (tổng vỏ-ngày theo từng loại)",amount:cylinderRentalCost},
     {item:"Phí lưu/thuê bồn XL-45 đã phát sinh",amount:xl45Cost},
     {item:"TỔNG TRƯỚC VAT",amount:goodsCost+transportCost+cylinderRentalCost+xl45Cost},
   ]);
-  styleSheet(wsSummary); wsSummary.getColumn("amount").numFmt="#,##0"; wsSummary.getRow(6).font={bold:true};
+  styleSheet(wsSummary); wsSummary.getColumn("amount").numFmt="#,##0"; wsSummary.getRow(7).font={bold:true};
+
+  const wsGoodsCost = wb.addWorksheet("Chi phí mua khí");
+  wsGoodsCost.columns = excelColumns([
+    ["Ngày giao","delivery_date",13],["Phiếu","delivery_code",20],["NCC","supplier_name",26],["Điểm giao","destination",24],
+    ["Loại khí / hàng","product_name",24],["Mã","product_code",12],["ĐVT","unit",10],["SL thực nhận","quantity",14],
+    ["Đơn giá","unit_price",16],["Thành tiền","amount",18],["Thiếu đơn giá","price_missing",15],
+  ]);
+  goodsCostDetails.forEach((r)=>wsGoodsCost.addRow(r));
+  styleSheet(wsGoodsCost);
+  wsGoodsCost.getColumn("unit_price").numFmt="#,#00";
+  wsGoodsCost.getColumn("amount").numFmt="#,#00";
+
+  const wsGoodsSummary = wb.addWorksheet("Mua khí - Tổng hợp");
+  wsGoodsSummary.columns = excelColumns([
+    ["Loại khí / hàng","product_name",26],["Mã","product_code",12],["ĐVT","unit",10],["SL thực nhận","quantity",16],
+    ["Đơn giá thấp nhất","min_unit_price",18],["Đơn giá cao nhất","max_unit_price",18],["Thành tiền","amount",18],["Dòng thiếu giá","missing_price_lines",16],
+  ]);
+  goodsCostSummary.forEach((r)=>wsGoodsSummary.addRow(r));
+  styleSheet(wsGoodsSummary);
+  wsGoodsSummary.getColumn("min_unit_price").numFmt="#,#00";
+  wsGoodsSummary.getColumn("max_unit_price").numFmt="#,#00";
+  wsGoodsSummary.getColumn("amount").numFmt="#,#00";
 
   const wsRentSummary = wb.addWorksheet("Thuê vỏ - Tổng hợp");
   wsRentSummary.columns = excelColumns([
     ["Loại khí","product_name",24],
     ["Mã","product_code",12],
-    ["Số vỏ ngày đầu tháng","opening_qty",20],
-    ["Số vỏ ngày cuối tháng","closing_qty",20],
+    ["Vỏ cuối ngày đầu kỳ","opening_qty",20],
+    ["Vỏ cuối hiện tại/cuối kỳ","closing_qty",22],
     ["Tổng vỏ-ngày","bottle_days",16],
     ["Đơn giá đầu kỳ","unit_price_from",18],
     ["Đơn giá cuối kỳ","unit_price_to",18],
@@ -158,6 +196,9 @@ export async function GET(request: Request) {
     ["Ngày","day",13],
     ["Loại khí","product_name",24],
     ["Mã","product_code",12],
+    ["NCC giao","supplier_in",14],
+    ["Trả NCC","supplier_out",14],
+    ["Tăng/giảm ròng","net_change",16],
     ["Số vỏ cuối ngày","held_qty",18],
     ["Đơn giá/vỏ/ngày","unit_price",18],
     ["Thành tiền ngày","rental_amount",18],
@@ -166,6 +207,22 @@ export async function GET(request: Request) {
   styleSheet(wsRentDaily);
   wsRentDaily.getColumn("unit_price").numFmt="#,##0";
   wsRentDaily.getColumn("rental_amount").numFmt="#,##0";
+
+  const wsXL45Daily = wb.addWorksheet("XL45 - Theo ngày");
+  wsXL45Daily.columns = excelColumns([
+    ["Ngày","day",13],["Loại bồn","product_name",24],["Mã","product_code",12],["Số bồn đang giữ","held_qty",18],
+    ["Số bồn tính phí","charge_qty",18],["Đơn giá/bồn/ngày","unit_price",20],["Thành tiền ngày","rental_amount",18],
+  ]);
+  xl45RentalDaily.forEach((r)=>wsXL45Daily.addRow(r));
+  styleSheet(wsXL45Daily);
+  wsXL45Daily.getColumn("unit_price").numFmt="#,#00";
+  wsXL45Daily.getColumn("rental_amount").numFmt="#,#00";
+
+  const wsXL45Summary = wb.addWorksheet("XL45 - Tổng hợp");
+  wsXL45Summary.columns = excelColumns([["Loại bồn","product_name",24],["Mã","product_code",12],["Bồn-ngày tính phí","bon_days",20],["Thành tiền","amount",18]]);
+  xl45RentalSummary.forEach((r)=>wsXL45Summary.addRow(r));
+  styleSheet(wsXL45Summary);
+  wsXL45Summary.getColumn("amount").numFmt="#,#00";
 
   if (profile.role !== "supplier") {
     const inv = await sql`
