@@ -6,7 +6,6 @@ import {
   CircleAlert,
   FileSpreadsheet,
   Search,
-  Truck,
   UsersRound,
   Warehouse,
 } from "lucide-react";
@@ -33,7 +32,6 @@ type ProductOverview = {
   warehouse: number;
   groups: number;
   mine: number;
-  transit: number;
   total: number;
 };
 
@@ -42,7 +40,6 @@ function isMineRow(row: InventoryRow) {
 }
 
 function rowStatus(row: InventoryRow) {
-  if (row.point_kind === "transit") return "transit";
   if (row.point_kind !== "warehouse") return "managed";
   if (row.low_threshold != null && Number(row.full_qty) <= Number(row.low_threshold)) return "low";
   return "normal";
@@ -51,14 +48,12 @@ function rowStatus(row: InventoryRow) {
 function statusLabel(status: string) {
   if (status === "low") return "Tồn thấp";
   if (status === "normal") return "Bình thường";
-  if (status === "transit") return "Đang vận chuyển";
   return "Đang quản lý";
 }
 
 function statusTone(status: string): "warning" | "success" | "info" | "neutral" {
   if (status === "low") return "warning";
   if (status === "normal") return "success";
-  if (status === "transit") return "info";
   return "neutral";
 }
 
@@ -84,7 +79,6 @@ function buildOverview(rows: InventoryRow[], totals: any[]): ProductOverview[] {
   return totals.map((t: any) => {
     const productRows = rows.filter((r) => r.product_code === t.product_code);
     const warehouse = productRows.filter((r) => r.point_kind === "warehouse").reduce((s, r) => s + Number(r.total_qty || 0), 0);
-    const transit = productRows.filter((r) => r.point_kind === "transit").reduce((s, r) => s + Number(r.total_qty || 0), 0);
     const mine = productRows.filter((r) => r.point_kind === "group" && isMineRow(r)).reduce((s, r) => s + Number(r.total_qty || 0), 0);
     const groups = productRows.filter((r) => r.point_kind === "group" && !isMineRow(r)).reduce((s, r) => s + Number(r.total_qty || 0), 0);
     return {
@@ -94,8 +88,7 @@ function buildOverview(rows: InventoryRow[], totals: any[]): ProductOverview[] {
       warehouse,
       groups,
       mine,
-      transit,
-      total: warehouse + groups + mine + transit,
+      total: warehouse + groups + mine,
     };
   }).filter((x) => x.total > 0);
 }
@@ -124,7 +117,7 @@ function buildPointSummary(rows: InventoryRow[]) {
       empty,
       total,
       lowRows,
-      status: item.point_kind === "transit" ? "transit" : lowRows.length ? "low" : item.point_kind === "warehouse" ? "normal" : "managed",
+      status: lowRows.length ? "low" : item.point_kind === "warehouse" ? "normal" : "managed",
     };
   }).sort((a, b) => {
     const rank = (x: typeof a) => x.point_kind === "warehouse" ? 1 : isMineRow(x.rows[0] ?? ({} as InventoryRow)) ? 3 : x.point_kind === "group" ? 2 : 4;
@@ -157,7 +150,6 @@ export default async function InventoryPage({ searchParams }: { searchParams: Se
     if (place === "warehouse" && row.point_kind !== "warehouse") return false;
     if (place === "groups" && (row.point_kind !== "group" || isMineRow(row))) return false;
     if (place === "mine" && !isMineRow(row)) return false;
-    if (place === "transit" && row.point_kind !== "transit") return false;
     if (product !== "all" && row.product_code !== product) return false;
     if (status !== "all" && rowStatus(row) !== status) return false;
     if (q && !`${row.point_name} ${row.product_name} ${row.product_code}`.toLowerCase().includes(q)) return false;
@@ -172,7 +164,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Se
   const warehouseEmpty = warehouseRows.reduce((s, r) => s + Number(r.empty_qty || 0), 0);
   const groupTotal = permittedRows.filter((r) => r.point_kind === "group" && !isMineRow(r)).reduce((s, r) => s + Number(r.total_qty || 0), 0);
   const groupCount = new Set(permittedRows.filter((r) => r.point_kind === "group" && !isMineRow(r) && Number(r.total_qty) > 0).map((r) => r.point_code)).size;
-  const transitTotal = permittedRows.filter((r) => r.point_kind === "transit").reduce((s, r) => s + Number(r.total_qty || 0), 0);
+  const mineTotal = permittedRows.filter((r) => r.point_kind === "group" && isMineRow(r)).reduce((s, r) => s + Number(r.total_qty || 0), 0);
   const systemTotal = overview.reduce((s, r) => s + r.total, 0);
 
   const o2Warehouse = permittedRows.find((r) => r.point_kind === "warehouse" && r.product_code === "O2");
@@ -200,15 +192,15 @@ export default async function InventoryPage({ searchParams }: { searchParams: Se
 
   return <div className="grid gap-5">
     <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-      <div><h1 className="font-display m-0 text-2xl text-[var(--brand-deep)] md:text-3xl">Tồn khí & vỏ chai</h1><p className="mt-1 text-sm text-[var(--muted-foreground)]">Nhìn nhanh tồn Kho, phân bổ theo nhóm, Mỏ Tà Thiết và số đang vận chuyển.</p></div>
+      <div><h1 className="font-display m-0 text-2xl text-[var(--brand-deep)] md:text-3xl">Tồn khí & vỏ chai</h1><p className="mt-1 text-sm text-[var(--muted-foreground)]">Nhìn nhanh tồn Kho, phân bổ theo các nhóm Nhà máy và Mỏ Tà Thiết.</p></div>
       <Link href="/reports" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-[var(--brand)] px-4 py-2 font-bold text-white hover:bg-[var(--brand-hover)]"><FileSpreadsheet size={18}/>Xuất Excel</Link>
     </div>
 
     <Card className="p-3 md:p-4">
       <form method="get" className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1.4fr_auto] xl:items-end">
-        <label className="grid gap-1.5 text-xs font-bold text-[var(--neutral)]">Địa điểm<select name="place" defaultValue={place} className="min-h-11 rounded-lg border border-[var(--border)] bg-white px-3 text-sm text-[var(--foreground)]"><option value="all">Tất cả</option><option value="warehouse">Kho Hậu cần</option><option value="groups">Các nhóm Nhà máy</option><option value="mine">Mỏ Tà Thiết</option><option value="transit">Đang vận chuyển</option></select></label>
+        <label className="grid gap-1.5 text-xs font-bold text-[var(--neutral)]">Địa điểm<select name="place" defaultValue={place} className="min-h-11 rounded-lg border border-[var(--border)] bg-white px-3 text-sm text-[var(--foreground)]"><option value="all">Tất cả</option><option value="warehouse">Kho Hậu cần</option><option value="groups">Các nhóm Nhà máy</option><option value="mine">Mỏ Tà Thiết</option></select></label>
         <label className="grid gap-1.5 text-xs font-bold text-[var(--neutral)]">Loại khí<select name="product" defaultValue={product} className="min-h-11 rounded-lg border border-[var(--border)] bg-white px-3 text-sm text-[var(--foreground)]"><option value="all">Tất cả</option>{productOptions.map(([code, name]) => <option key={code} value={code}>{name}</option>)}</select></label>
-        <label className="grid gap-1.5 text-xs font-bold text-[var(--neutral)]">Trạng thái<select name="status" defaultValue={status} className="min-h-11 rounded-lg border border-[var(--border)] bg-white px-3 text-sm text-[var(--foreground)]"><option value="all">Tất cả</option><option value="low">Tồn thấp</option><option value="normal">Bình thường</option><option value="managed">Đang quản lý</option><option value="transit">Đang vận chuyển</option></select></label>
+        <label className="grid gap-1.5 text-xs font-bold text-[var(--neutral)]">Trạng thái<select name="status" defaultValue={status} className="min-h-11 rounded-lg border border-[var(--border)] bg-white px-3 text-sm text-[var(--foreground)]"><option value="all">Tất cả</option><option value="low">Tồn thấp</option><option value="normal">Bình thường</option><option value="managed">Đang quản lý</option></select></label>
         <label className="grid gap-1.5 text-xs font-bold text-[var(--neutral)]">Tìm kiếm<div className="flex min-h-11 items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3"><Search size={17} className="text-[var(--muted-foreground)]"/><input name="q" defaultValue={p.q || ""} placeholder="Tìm vị trí / nhóm / loại khí" className="min-w-0 flex-1 border-0 bg-transparent outline-none"/></div></label>
         <button type="submit" className="min-h-11 rounded-lg border border-[var(--border)] bg-white px-4 font-bold hover:bg-[var(--muted)]">Áp dụng</button>
       </form>
@@ -218,19 +210,18 @@ export default async function InventoryPage({ searchParams }: { searchParams: Se
       <Card className="flex items-center gap-4"><div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-blue-50 text-[var(--brand)]"><Boxes size={22}/></div><div><div className="text-xs font-bold text-[var(--muted-foreground)]">Tổng vỏ NCC quản lý</div><div className="mt-1 text-3xl font-extrabold text-[var(--brand-deep)]">{formatNumber(systemTotal)} <span className="text-sm">chai/bồn</span></div><div className="mt-1 text-xs text-[var(--muted-foreground)]">Toàn hệ thống</div></div></Card>
       <Card className="flex items-center gap-4"><div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-blue-50 text-[var(--brand)]"><Warehouse size={22}/></div><div className="min-w-0"><div className="text-xs font-bold text-[var(--muted-foreground)]">Kho Hậu cần</div><div className="mt-2 flex items-end gap-4"><div><div className="text-[11px] text-[var(--muted-foreground)]">Đầy</div><div className="text-xl font-extrabold text-[var(--success)]">{formatNumber(warehouseFull)}</div></div><div className="h-8 border-l border-[var(--border)]"/><div><div className="text-[11px] text-[var(--muted-foreground)]">Rỗng</div><div className="text-xl font-extrabold text-[var(--brand)]">{formatNumber(warehouseEmpty)}</div></div></div></div></Card>
       <Card className="flex items-center gap-4"><div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-blue-50 text-[var(--brand)]"><UsersRound size={22}/></div><div><div className="text-xs font-bold text-[var(--muted-foreground)]">Các nhóm đang quản lý</div><div className="mt-1 text-3xl font-extrabold text-[var(--brand-deep)]">{formatNumber(groupTotal)} <span className="text-sm">chai</span></div><div className="mt-1 text-xs text-[var(--muted-foreground)]">{groupCount} nhóm có tồn</div></div></Card>
-      <Card className="flex items-center gap-4"><div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-blue-50 text-[var(--brand)]"><Truck size={22}/></div><div><div className="text-xs font-bold text-[var(--muted-foreground)]">Đang vận chuyển</div><div className="mt-1 text-3xl font-extrabold text-[var(--brand-deep)]">{formatNumber(transitTotal)} <span className="text-sm">chai</span></div><div className="mt-1 text-xs text-[var(--muted-foreground)]">Chưa bàn giao điểm nhận</div></div></Card>
+      <Card className="flex items-center gap-4"><div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-violet-50 text-violet-700"><Building2 size={22}/></div><div><div className="text-xs font-bold text-[var(--muted-foreground)]">Mỏ Tà Thiết</div><div className="mt-1 text-3xl font-extrabold text-[var(--brand-deep)]">{formatNumber(mineTotal)} <span className="text-sm">chai</span></div><div className="mt-1 text-xs text-[var(--muted-foreground)]">Tồn Nhóm Cối / Mỏ</div></div></Card>
       <Card className="flex items-center gap-4"><div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-orange-50 text-orange-600"><CircleAlert size={24}/></div><div><div className="text-xs font-bold text-[var(--muted-foreground)]">Cảnh báo tồn thấp</div><div className="mt-1 text-3xl font-extrabold text-[var(--danger)]">{lowRows.length} <span className="text-sm">loại</span></div><div className="mt-1 text-xs text-[var(--muted-foreground)]">Cần kiểm tra đặt hàng</div></div></Card>
     </div>
 
     <Card>
-      <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between"><div><h2 className="m-0 text-base font-extrabold">Tổng quan theo loại khí</h2><p className="mt-1 text-xs text-[var(--muted-foreground)]">Mỗi thanh cho biết chai/bồn đang nằm ở đâu trong hệ thống.</p></div><div className="flex flex-wrap gap-3 text-xs font-bold text-[var(--muted-foreground)]"><span className="flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-sm bg-blue-500"/>Kho</span><span className="flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-sm bg-emerald-500"/>Nhóm</span><span className="flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-sm bg-violet-500"/>Mỏ Tà Thiết</span><span className="flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-sm bg-orange-500"/>Đang vận chuyển</span></div></div>
+      <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between"><div><h2 className="m-0 text-base font-extrabold">Tổng quan theo loại khí</h2><p className="mt-1 text-xs text-[var(--muted-foreground)]">Mỗi thanh cho biết chai/bồn đang nằm ở đâu trong hệ thống.</p></div><div className="flex flex-wrap gap-3 text-xs font-bold text-[var(--muted-foreground)]"><span className="flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-sm bg-blue-500"/>Kho</span><span className="flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-sm bg-emerald-500"/>Nhóm</span><span className="flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-sm bg-violet-500"/>Mỏ Tà Thiết</span></div></div>
       <div className="grid gap-3">{overview.length ? overview.map((item) => {
         const max = Math.max(item.total, 1);
         const segments = [
           { value: item.warehouse, className: "bg-blue-500", label: "Kho" },
           { value: item.groups, className: "bg-emerald-500", label: "Nhóm" },
           { value: item.mine, className: "bg-violet-500", label: "Mỏ" },
-          { value: item.transit, className: "bg-orange-500", label: "Đang vận chuyển" },
         ];
         return <div key={item.product_code} className="grid gap-2 md:grid-cols-[220px_1fr_110px] md:items-center">
           <div className="flex items-center gap-3"><div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11px] font-extrabold text-white ${productAccent(item.product_code)}`}>{productMark(item.product_code)}</div><div className="font-bold">{item.product_name}</div></div>
@@ -248,7 +239,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Se
           <Link href={tabHref("warning")} className={`whitespace-nowrap border-b-2 px-3 py-3 text-sm font-bold ${tab === "warning" ? "border-[var(--brand)] text-[var(--brand)]" : "border-transparent text-[var(--neutral)]"}`}>Cảnh báo</Link>
         </div>
 
-        {tab === "location" ? <div className="overflow-x-auto p-4"><table className="mobile-card-table w-full border-collapse text-sm"><thead className="bg-[var(--muted)]"><tr className="text-left text-xs uppercase tracking-wide text-[var(--muted-foreground)]"><th className="p-3">Vị trí / Nhóm</th><th className="p-3">Loại khí</th><th className="p-3">Đầy</th><th className="p-3">Rỗng</th><th className="p-3">Tổng</th><th className="p-3">Trạng thái</th></tr></thead><tbody>{pointSummary.map((item) => <tr key={item.point_code} className="border-t border-[var(--border)]"><td data-label="Vị trí / Nhóm" className="p-3"><div className="flex items-center gap-2 font-bold">{item.point_kind === "warehouse" ? <Warehouse size={17} className="text-[var(--brand)]"/> : item.point_kind === "transit" ? <Truck size={17} className="text-[var(--brand)]"/> : <UsersRound size={17} className="text-[var(--brand)]"/>}{item.point_name}</div></td><td data-label="Loại khí" className="p-3"><div className="font-bold">{item.gasLabel}</div>{item.gasLabel !== item.mainProduct && item.mainProduct !== "—" ? <div className="mt-0.5 text-[11px] text-[var(--muted-foreground)]">Nhiều nhất: {item.mainProduct}</div> : null}</td><td data-label="Đầy" className="p-3 font-mono-data font-bold text-[var(--success)]">{item.point_kind === "warehouse" ? formatNumber(item.full) : "—"}</td><td data-label="Rỗng" className="p-3 font-mono-data font-bold text-[var(--brand)]">{item.point_kind === "warehouse" ? formatNumber(item.empty) : "—"}</td><td data-label="Tổng" className="p-3 font-mono-data font-extrabold">{formatNumber(item.total)}</td><td data-label="Trạng thái" className="p-3"><Badge tone={statusTone(item.status)}>{statusLabel(item.status)}</Badge>{item.lowRows.length > 1 ? <div className="mt-1 text-[11px] text-[var(--warning)]">{item.lowRows.length} loại dưới ngưỡng</div> : null}</td></tr>)}</tbody></table>{pointSummary.length === 0 ? <div className="p-6 text-center text-sm text-[var(--muted-foreground)]">Không có dữ liệu phù hợp bộ lọc.</div> : null}</div> : null}
+        {tab === "location" ? <div className="overflow-x-auto p-4"><table className="mobile-card-table w-full border-collapse text-sm"><thead className="bg-[var(--muted)]"><tr className="text-left text-xs uppercase tracking-wide text-[var(--muted-foreground)]"><th className="p-3">Vị trí / Nhóm</th><th className="p-3">Loại khí</th><th className="p-3">Đầy</th><th className="p-3">Rỗng</th><th className="p-3">Tổng</th><th className="p-3">Trạng thái</th></tr></thead><tbody>{pointSummary.map((item) => <tr key={item.point_code} className="border-t border-[var(--border)]"><td data-label="Vị trí / Nhóm" className="p-3"><div className="flex items-center gap-2 font-bold">{item.point_kind === "warehouse" ? <Warehouse size={17} className="text-[var(--brand)]"/> : <UsersRound size={17} className="text-[var(--brand)]"/>}{item.point_name}</div></td><td data-label="Loại khí" className="p-3"><div className="font-bold">{item.gasLabel}</div>{item.gasLabel !== item.mainProduct && item.mainProduct !== "—" ? <div className="mt-0.5 text-[11px] text-[var(--muted-foreground)]">Nhiều nhất: {item.mainProduct}</div> : null}</td><td data-label="Đầy" className="p-3 font-mono-data font-bold text-[var(--success)]">{item.point_kind === "warehouse" ? formatNumber(item.full) : "—"}</td><td data-label="Rỗng" className="p-3 font-mono-data font-bold text-[var(--brand)]">{item.point_kind === "warehouse" ? formatNumber(item.empty) : "—"}</td><td data-label="Tổng" className="p-3 font-mono-data font-extrabold">{formatNumber(item.total)}</td><td data-label="Trạng thái" className="p-3"><Badge tone={statusTone(item.status)}>{statusLabel(item.status)}</Badge>{item.lowRows.length > 1 ? <div className="mt-1 text-[11px] text-[var(--warning)]">{item.lowRows.length} loại dưới ngưỡng</div> : null}</td></tr>)}</tbody></table>{pointSummary.length === 0 ? <div className="p-6 text-center text-sm text-[var(--muted-foreground)]">Không có dữ liệu phù hợp bộ lọc.</div> : null}</div> : null}
 
         {tab === "product" ? <div className="grid gap-3 p-4">{filteredRows.filter((r) => Number(r.total_qty) > 0).map((row) => <div key={`${row.point_code}-${row.product_code}`} className="grid gap-3 rounded-xl border border-[var(--border)] p-4 sm:grid-cols-[1fr_180px_120px] sm:items-center"><div><div className="font-bold">{row.product_name}</div><div className="mt-1 text-xs text-[var(--muted-foreground)]">{row.point_name}</div></div><div className="text-sm"><span className="text-[var(--muted-foreground)]">Số lượng: </span><strong>{formatNumber(row.total_qty)} {row.unit}</strong></div><div className="sm:text-right"><Badge tone={statusTone(rowStatus(row))}>{statusLabel(rowStatus(row))}</Badge></div></div>)}{filteredRows.filter((r) => Number(r.total_qty) > 0).length === 0 ? <div className="p-6 text-center text-sm text-[var(--muted-foreground)]">Không có dữ liệu phù hợp bộ lọc.</div> : null}</div> : null}
 

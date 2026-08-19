@@ -7,6 +7,7 @@ export async function getInventory(): Promise<InventoryRow[]> {
       full_qty::float8 AS full_qty,empty_qty::float8 AS empty_qty,total_qty::float8 AS total_qty,
       low_threshold::float8 AS low_threshold
     FROM inventory_status_v
+    WHERE point_kind <> 'transit'
     ORDER BY CASE point_kind WHEN 'warehouse' THEN 1 WHEN 'group' THEN 2 ELSE 3 END, point_name, product_name
   `;
   return rows;
@@ -23,9 +24,10 @@ export async function getInventoryTotals() {
     SELECT product_code,product_name,unit,
       SUM(CASE WHEN point_kind='warehouse' THEN total_qty ELSE 0 END)::float8 AS warehouse_qty,
       SUM(CASE WHEN point_kind='group' THEN total_qty ELSE 0 END)::float8 AS group_qty,
-      SUM(CASE WHEN point_kind='transit' THEN total_qty ELSE 0 END)::float8 AS transit_qty,
+      0::float8 AS transit_qty,
       SUM(total_qty)::float8 AS system_total
     FROM inventory_status_v
+    WHERE point_kind <> 'transit'
     GROUP BY product_code,product_name,unit
     HAVING SUM(total_qty)<>0
     ORDER BY product_name

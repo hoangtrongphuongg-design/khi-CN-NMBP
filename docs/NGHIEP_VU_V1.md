@@ -76,11 +76,14 @@ Nhóm tạo -> Thủ kho nhận số thực tế -> tồn cập nhật ngay -> T
 
 ## 9. Điều chuyển Nhà máy ↔ Mỏ
 
-- Nhà máy → Mỏ: Workshop/Trưởng kho tạo và xuất; XSC Mỏ xác nhận nhận.
-- Mỏ → Nhà máy: XSC Mỏ tạo và xuất; Thủ kho Nhà máy nhận; Trưởng kho/Workshop hậu kiểm.
-- Khi xuất: giảm nơi gửi, tăng `Đang vận chuyển`.
-- Khi nhận: giảm `Đang vận chuyển`, tăng nơi nhận.
-- Điều chuyển không làm thay đổi tổng vỏ NCC.
+- Nhà máy → Mỏ: Workshop/Trưởng kho tạo lệnh và bấm xác nhận; Kho giảm và Nhóm Cối/Mỏ tăng ngay.
+- XSC Mỏ chỉ xem; nếu phát hiện sai thì gửi phản hồi trên phiếu.
+- Mỏ → Nhà máy: XSC Mỏ tạo lệnh và bấm xác nhận; Mỏ giảm và vỏ rỗng Kho Hậu cần tăng ngay.
+- Workshop/Trưởng kho chỉ phản hồi nếu phát hiện sai.
+- Không dùng trạng thái `Đang vận chuyển`, không yêu cầu bên nhận xác nhận lần hai.
+- Điều chuyển không làm thay đổi tổng vỏ NCC; chỉ đổi vị trí quản lý.
+- Phiếu sai không sửa trực tiếp lịch sử; dùng phản hồi và điều chỉnh có truy vết.
+
 
 ## 10. Phân quyền
 

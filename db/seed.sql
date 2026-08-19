@@ -51,9 +51,6 @@ INSERT INTO stock_points(code,name,kind,location_id)
 SELECT 'WH-PHC','Kho Hậu cần','warehouse',id FROM locations WHERE code='PLANT'
 ON CONFLICT (code) DO NOTHING;
 
-INSERT INTO stock_points(code,name,kind)
-VALUES ('TRANSIT','Đang vận chuyển','transit')
-ON CONFLICT (code) DO NOTHING;
 
 INSERT INTO stock_points(code,name,kind,location_id,group_id)
 SELECT 'GRP-'||g.code, g.name, 'group', g.location_id, g.id
