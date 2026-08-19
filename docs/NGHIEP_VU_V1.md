@@ -224,3 +224,33 @@ Có cơ cấu chi phí, xu hướng, top loại khí, bảng tổng hợp theo l
 - Ban quản đốc: dashboard chỉ xem tồn, cảnh báo, chi phí, phiếu gần đây.
 - Admin: tab Tài khoản/Đơn giá/Ngưỡng tồn/Ngày nghỉ/Danh mục theo mockup.
 - Thao tác quan trọng: confirm modal trước khi thực hiện và toast sau khi thành công/thất bại.
+
+
+## 16. Chuẩn giao diện thống nhất V1.0.21
+
+### Khung giao diện chung
+- Tất cả tài khoản dùng cùng một khung desktop/mobile: logo, sidebar, header, vị trí chuông, vị trí thông tin tài khoản, khoảng cách, card, bảng, form, modal xác nhận và toast.
+- Desktop: góc trái header luôn hiển thị **Quản lý khí NMBP / Hệ thống quản lý khí công nghiệp**. Góc phải luôn hiển thị **Tên tài khoản** ở dòng 1 và **Chức vụ / vai trò / đơn vị** ở dòng 2. Không lặp tên NCC hoặc tên người dùng ở hai vị trí.
+- Mobile: giữ ngôn ngữ thiết kế của mockup Nhóm CBL đã duyệt: header xanh, card trắng bo lớn, thao tác nhanh, bottom-sheet; tên tài khoản và vai trò luôn ở cùng một vị trí.
+- Nội dung, dữ liệu và nút nghiệp vụ vẫn thay đổi theo quyền; hình thức hiển thị và vị trí thành phần không thay đổi giữa các vai trò.
+
+### Typography
+- Dùng **Be Vietnam Pro** toàn hệ thống, gồm tiêu đề, sidebar, KPI, bảng, form, nút và số liệu.
+- Số liệu dùng `font-variant-numeric: tabular-nums` để thẳng cột nhưng không dùng font mono cứng.
+- Giảm font-weight tổng thể: nội dung 400-500, nút/sidebar 600, heading/KPI 700.
+
+### Màu nhận diện và độ tương phản
+- Primary: `#004A8F` + chữ trắng, tương phản ~8.84:1.
+- Primary hover: `#003B73` + chữ trắng, ~11.21:1.
+- Header/sidebar đậm: `#002B55` + chữ trắng, ~14.22:1.
+- Success: `#15803D` + chữ trắng, ~5.02:1.
+- Warning đậm: `#92400E` + chữ trắng, ~7.09:1.
+- Danger: `#B91C1C` + chữ trắng, ~6.47:1.
+- Return/action orange đổi sang `#C2410C` + chữ trắng, ~5.18:1; không dùng `#F97316` với chữ trắng vì độ tương phản thấp.
+- Nút nền xanh/đỏ/xanh lá đậm bắt buộc chữ/icon trắng. Nút outline dùng nền trắng + chữ xanh đậm. Badge nền nhạt dùng chữ đậm cùng tông.
+- Heading: `#0F2747`; body: `#344054`; secondary: `#667085`; placeholder: `#98A2B3`.
+
+### Quy tắc thao tác
+- Mọi thao tác quan trọng (Gửi, Lưu, Xác nhận, Duyệt, Hoàn tất, Xóa, Điều chỉnh) hiện modal xác nhận trước khi thực hiện.
+- Sau thao tác hiển thị toast thành công/thất bại rõ ràng.
+- Không dùng chữ tối trên nút nền màu đậm.

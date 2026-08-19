@@ -435,3 +435,123 @@ input,select,textarea { color:var(--body-foreground); }
   .surface,.role-card { border-radius:20px !important; }
   .role-metric { min-height:112px; }
 }
+
+/* V1.0.21 — unified identity placement + WCAG contrast pass */
+:root {
+  --brand:#004a8f;
+  --brand-deep:#002b55;
+  --brand-hover:#003b73;
+  --heading-foreground:#0f2747;
+  --body-foreground:#344054;
+  --primary-foreground:#ffffff;
+  --success:#15803d;
+  --warning:#92400e;
+  --danger:#b91c1c;
+  --neutral:#4b5563;
+  --action-borrow:#15803d;
+  --action-return:#c2410c;
+  --link:#004a8f;
+}
+
+/* One header geometry for every role/account on desktop. */
+@media (min-width:768px) {
+  .role-shell .app-topbar {
+    display:flex !important;
+    min-height:76px !important;
+    background:rgba(255,255,255,.97) !important;
+    color:var(--brand-deep) !important;
+    border-color:var(--border) !important;
+    box-shadow:0 1px 0 rgba(15,39,71,.03);
+  }
+  .role-shell .app-role-title {
+    color:var(--heading-foreground) !important;
+    font-size:1.1rem !important;
+    font-weight:700 !important;
+    line-height:1.2;
+    letter-spacing:-.018em;
+  }
+  .role-shell .app-role-subtitle {
+    color:var(--muted-foreground) !important;
+    font-size:.78rem !important;
+    font-weight:400;
+  }
+  .role-shell .desktop-menu-button {
+    border-color:var(--border) !important;
+    background:#fff !important;
+    color:var(--brand-deep) !important;
+  }
+  .role-shell .notification-button { color:var(--brand-deep) !important; }
+  .role-workshop .role-main { padding-top:24px !important; }
+}
+.account-identity { min-width:190px; justify-content:flex-end; }
+.account-name { max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--heading-foreground); font-size:.86rem; font-weight:600; line-height:1.25; }
+.account-role { max-width:260px; margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted-foreground); font-size:.69rem; font-weight:500; line-height:1.25; }
+.mobile-logout-button { display:grid; min-width:38px; min-height:38px; place-items:center; border-radius:12px; color:#fff; }
+
+/* Strong semantic buttons always receive a readable foreground. */
+.ui-button-primary,
+.btn-primary,
+a[class*="bg-[var(--brand)]"],
+button[class*="bg-[var(--brand)]"],
+a[class*="bg-[var(--primary)]"],
+button[class*="bg-[var(--primary)]"] {
+  color:#fff !important;
+}
+.ui-button-primary:hover,
+.btn-primary:hover { background:var(--brand-hover) !important; color:#fff !important; }
+.ui-button-danger,
+a[class*="bg-[var(--danger)]"],
+button[class*="bg-[var(--danger)]"] { color:#fff !important; }
+.ui-button-success,
+a[class*="bg-[var(--success)]"],
+button[class*="bg-[var(--success)]"] { color:#fff !important; }
+.group-action.exchange { background:var(--brand); color:#fff !important; }
+.group-action.borrow { background:var(--action-borrow); color:#fff !important; }
+.group-action.return { background:var(--action-return); color:#fff !important; }
+
+/* Outline/secondary actions retain brand text on a light surface. */
+.ui-button-secondary { background:#fff !important; color:var(--heading-foreground) !important; border-color:#cfd8e3 !important; }
+.ui-button-secondary:hover { background:#f3f7fb !important; color:var(--brand-deep) !important; }
+.ui-button-ghost { background:transparent !important; color:var(--brand-deep) !important; }
+
+/* Tabs and quick actions: active = white on brand, inactive = dark on white. */
+.request-tabs .active,
+.admin-tabs a.active,
+.exact-quick-button:first-child,
+.sidebar-link-active { background:var(--brand) !important; color:#fff !important; }
+.exact-quick-button:not(:first-child) { color:var(--brand-deep) !important; background:#fff !important; }
+
+/* Improve legibility of semantic accents on white/light cards. */
+.exact-metric.tone-green .exact-metric-icon,
+.exact-metric.tone-green .exact-metric-number,
+.role-metric.tone-success .role-metric-icon,
+.role-metric.tone-success .role-metric-value { color:var(--success) !important; }
+.exact-metric.tone-orange .exact-metric-icon,
+.exact-metric.tone-orange .exact-metric-number,
+.role-metric.tone-warning .role-metric-icon,
+.role-metric.tone-warning .role-metric-value { color:#c2410c !important; }
+.exact-metric.tone-red .exact-metric-icon,
+.exact-metric.tone-red .exact-metric-number,
+.role-metric.tone-danger .role-metric-icon,
+.role-metric.tone-danger .role-metric-value { color:var(--danger) !important; }
+.exact-metric.tone-purple .exact-metric-icon,
+.exact-metric.tone-purple .exact-metric-number { color:#6d28d9 !important; }
+
+/* Global typography normalization. */
+body,button,input,select,textarea,table { font-family:var(--font-be-vietnam-pro),"Be Vietnam Pro","Segoe UI",Arial,sans-serif; }
+button,a,input,select,textarea { font-weight:500; }
+.sidebar-link,.role-primary-link,.group-action,.exact-quick-button,.manager-primary,.manager-secondary { font-weight:600; }
+.role-page-heading h1,.exact-page-title h1,.app-role-title { text-transform:none !important; }
+
+/* Mobile keeps the approved Nhóm CBL visual language for every role. */
+@media (max-width:767px) {
+  .role-shell .app-topbar {
+    min-height:110px !important;
+    background:linear-gradient(135deg,#064489 0%,#0058a9 55%,#004a8f 100%) !important;
+    color:#fff !important;
+  }
+  .role-shell .app-role-title { color:#fff !important; font-size:1.38rem !important; font-weight:700 !important; }
+  .role-shell .app-role-subtitle { color:rgba(255,255,255,.82) !important; font-size:.78rem !important; }
+  .role-shell .notification-button { color:#fff !important; }
+  .account-name,.account-role { color:inherit; }
+}
