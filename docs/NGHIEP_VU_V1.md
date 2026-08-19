@@ -211,3 +211,16 @@ Có cơ cấu chi phí, xu hướng, top loại khí, bảng tổng hợp theo l
 - Desktop/mobile dùng cùng design system; mobile ưu tiên thao tác nhanh và bottom navigation.
 - Mọi POST quan trọng có hộp xác nhận; sau thao tác có toast thành công/thất bại.
 - Điều chuyển Nhà máy ↔ Mỏ: một lần xác nhận, cập nhật tồn ngay; một lệnh có thể gồm nhiều loại khí; bên nhận chỉ phản hồi nếu sai.
+
+
+## Chuẩn giao diện theo vai trò — V1.0.18
+- Dashboard từng vai trò phải bám sát mockup đã duyệt, không dùng một bố cục generic rồi đổi nhãn.
+- Desktop và mobile có bố cục riêng theo vai trò; dữ liệu = 0 được ẩn ở các khối tồn/nhóm theo nguyên tắc đã chốt.
+- Workshop: 5 KPI, bảng Điều phối tổng thể, form Điều chuyển Nhà máy ↔ Mỏ luôn hiện, bảng hoạt động gần đây, thao tác nhanh.
+- Thủ kho: tồn đầy/rỗng, phiếu chờ xử lý Đổi/Mượn/Trả, xử lý số lượng thực tế từng dòng.
+- Trưởng kho: KPI duyệt/chênh lệch/tồn thấp/vượt định mức, danh sách và panel chi tiết phiếu.
+- XSC Mỏ: số chai tại Mỏ, lệnh từ Nhà máy, phản hồi, form điều chuyển về Nhà máy.
+- NCC: KPI Chờ XSC/Chờ PHC/Hoàn tất, form tạo phiếu giao nhiều dòng, phiếu gần đây.
+- Ban quản đốc: dashboard chỉ xem tồn, cảnh báo, chi phí, phiếu gần đây.
+- Admin: tab Tài khoản/Đơn giá/Ngưỡng tồn/Ngày nghỉ/Danh mục theo mockup.
+- Thao tác quan trọng: confirm modal trước khi thực hiện và toast sau khi thành công/thất bại.
