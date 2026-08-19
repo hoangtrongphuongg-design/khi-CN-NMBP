@@ -197,3 +197,17 @@ Có cơ cấu chi phí, xu hướng, top loại khí, bảng tổng hợp theo l
 - Sau thao tác, hiển thị toast nhỏ **Thành công** hoặc **Không thành công**.
 - Phiếu hoàn tất không sửa trực tiếp; mọi thay đổi quan trọng có audit log.
 
+
+
+## V1.0.17 — Chuẩn giao diện theo vai trò
+- Đốc công/Giám sát: Số chai tại nhóm; Tồn Kho Hậu cần; thao tác nhanh Đổi/Mượn/Trả; loại = 0 được ẩn mặc định.
+- Thủ kho: ưu tiên tồn đầy/rỗng, phiếu chờ xử lý và nhập SL thực tế từng dòng.
+- Trưởng kho: ưu tiên phiếu cần duyệt, chênh lệch, tồn thấp và hậu kiểm.
+- Workshop: dashboard điều phối toàn hệ thống, điều chuyển nhiều loại khí trong 1 lệnh, tồn và giao nhận.
+- XSC Mỏ: số chai tại Mỏ, lệnh từ Nhà máy, tạo điều chuyển về Nhà máy và phản hồi khi sai.
+- NCC: tạo phiếu giao nhiều loại/địa điểm và theo dõi Chờ XSC → Chờ PHC → Hoàn tất.
+- Ban quản đốc: chỉ xem tổng quan tồn, cảnh báo, chi phí và phiếu gần đây.
+- Admin: tài khoản, đơn giá, ngưỡng tồn, lịch ngoại lệ, danh mục và audit.
+- Desktop/mobile dùng cùng design system; mobile ưu tiên thao tác nhanh và bottom navigation.
+- Mọi POST quan trọng có hộp xác nhận; sau thao tác có toast thành công/thất bại.
+- Điều chuyển Nhà máy ↔ Mỏ: một lần xác nhận, cập nhật tồn ngay; một lệnh có thể gồm nhiều loại khí; bên nhận chỉ phản hồi nếu sai.

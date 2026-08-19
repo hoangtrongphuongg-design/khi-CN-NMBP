@@ -6,8 +6,8 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     await sql`SELECT 1 AS ok`;
-    return NextResponse.json({ ok: true, app: "khicn-nmbp", database: "connected", version: "0.1.16" }, { status: 200 });
+    return NextResponse.json({ ok: true, app: "khicn-nmbp", database: "connected", version: "0.1.17" }, { status: 200 });
   } catch {
-    return NextResponse.json({ ok: false, app: "khicn-nmbp", database: "unavailable", version: "0.1.16" }, { status: 503 });
+    return NextResponse.json({ ok: false, app: "khicn-nmbp", database: "unavailable", version: "0.1.17" }, { status: 503 });
   }
 }
