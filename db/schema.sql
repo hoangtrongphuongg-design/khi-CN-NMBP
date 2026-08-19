@@ -187,10 +187,12 @@ CREATE TABLE IF NOT EXISTS supplier_deliveries (
   trip_id uuid REFERENCES transport_trips(id),
   supplier_org_id uuid NOT NULL REFERENCES organizations(id),
   delivery_date date NOT NULL,
-  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','feedback','completed','cancelled')),
+  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','feedback','phc_pending','completed','cancelled')),
   note text,
   created_at timestamptz NOT NULL DEFAULT now(),
-  created_by uuid NOT NULL REFERENCES users(id)
+  created_by uuid NOT NULL REFERENCES users(id),
+  phc_confirmed_by uuid REFERENCES users(id),
+  phc_confirmed_at timestamptz
 );
 
 CREATE TABLE IF NOT EXISTS supplier_delivery_items (
@@ -200,7 +202,7 @@ CREATE TABLE IF NOT EXISTS supplier_delivery_items (
   destination_location_id uuid NOT NULL REFERENCES locations(id),
   declared_qty numeric(14,3) NOT NULL CHECK (declared_qty > 0),
   confirmed_qty numeric(14,3),
-  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','confirmed','feedback')),
+  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','xsc_confirmed','confirmed','feedback')),
   feedback text,
   price_rule_id uuid REFERENCES price_rules(id),
   unit_price numeric(16,2),

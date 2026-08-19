@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireProfile } from "@/lib/auth/session";
-import { confirmDeliveryItem, createSupplierDelivery, resubmitDeliveryItem } from "@/lib/services/deliveries";
+import { confirmDeliveryItem, createSupplierDelivery, finalizeDeliveryByPhc, resubmitDeliveryItem } from "@/lib/services/deliveries";
 import { confirmSupplierReturn, createSupplierReturn } from "@/lib/services/supplier-returns";
 
 function back(request: Request, params: string) {
@@ -31,6 +31,8 @@ export async function POST(request: Request) {
         action === "confirm_delivery_item" ? "confirm" : "feedback",
         String(form.get("feedback") || ""),
       );
+    } else if (action === "finalize_delivery_phc") {
+      await finalizeDeliveryByPhc(profile, String(form.get("delivery_id")));
     } else if (action === "create_supplier_return") {
       const lines = JSON.parse(String(form.get("lines") || "[]"));
       await createSupplierReturn(profile, {
