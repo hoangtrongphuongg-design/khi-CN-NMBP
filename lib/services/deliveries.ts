@@ -152,7 +152,7 @@ export async function finalizeDeliveryByPhc(profile: Profile, deliveryId: string
       FROM supplier_deliveries d
       LEFT JOIN transport_trips t ON t.id=d.trip_id
       WHERE d.id=${deliveryId}::uuid
-      FOR UPDATE
+      FOR UPDATE OF d
     `;
     if (!delivery) throw new Error("Không tìm thấy Phiếu giao");
     if (delivery.status === "completed") throw new Error("Phiếu giao đã hoàn tất");
