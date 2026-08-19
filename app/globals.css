@@ -2,7 +2,7 @@
 
 :root {
   color-scheme: light;
-  --radius: 0.5rem;
+  --radius: 0.75rem;
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -12,9 +12,9 @@
   --brand: #004a8f;
   --brand-deep: #002b55;
   --brand-hover: #003b73;
-  --ink: #111827;
-  --paper: #f6f8fa;
-  --line: #d1d5db;
+  --ink: #344054;
+  --paper: #f4f7fb;
+  --line: #dfe5ec;
 
   --background: var(--paper);
   --foreground: var(--ink);
@@ -23,7 +23,7 @@
   --primary-hover: var(--brand-hover);
   --primary-foreground: #ffffff;
   --muted: #eef2f6;
-  --muted-foreground: #6b7280;
+  --muted-foreground: #667085;
   --border: var(--line);
   --ring: var(--brand);
 
@@ -44,20 +44,28 @@ body {
   min-height: 100vh;
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, "Helvetica Neue", sans-serif;
+  font-family: var(--font-be-vietnam-pro), "Be Vietnam Pro", "Segoe UI", Arial, sans-serif;
   font-size: 14px;
+  font-weight: 400;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
-button, input, select, textarea { font: inherit; }
+button, input, select, textarea { font: inherit; font-family: inherit; }
 a { color: inherit; text-decoration: none; }
 
 .font-display {
-  font-family: "Arial Narrow", Arial, sans-serif;
-  font-weight: 800;
-  letter-spacing: .03em;
-  text-transform: uppercase;
+  font-family: var(--font-be-vietnam-pro), "Be Vietnam Pro", "Segoe UI", Arial, sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  text-transform: none;
 }
 .font-mono-data {
-  font-family: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  font-family: var(--font-be-vietnam-pro), "Be Vietnam Pro", "Segoe UI", Arial, sans-serif;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }
 
 :focus-visible {
@@ -137,7 +145,7 @@ a { color: inherit; text-decoration: none; }
 .sidebar-link { display:flex; min-height:44px; align-items:center; gap:.75rem; border-radius:.75rem; padding:.65rem .8rem; color:rgba(255,255,255,.86); font-size:.875rem; font-weight:800; }
 .sidebar-link:hover { background:rgba(255,255,255,.11); color:#fff; }
 .role-page-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; }
-.role-page-heading h1 { margin:.15rem 0 0; color:var(--brand-deep); font-family:"Arial Narrow",Arial,sans-serif; font-size:clamp(1.65rem,2.5vw,2.2rem); font-weight:900; letter-spacing:.015em; }
+.role-page-heading h1 { margin:.15rem 0 0; color:var(--brand-deep); font-family:var(--font-be-vietnam-pro),"Be Vietnam Pro","Segoe UI",Arial,sans-serif; font-size:clamp(1.65rem,2.5vw,2.2rem); font-weight:900; letter-spacing:.015em; }
 .role-page-heading p { margin:.35rem 0 0; color:var(--muted-foreground); font-size:.92rem; line-height:1.5; }
 .role-kicker { color:var(--brand); font-size:.72rem; font-weight:900; letter-spacing:.08em; text-transform:uppercase; }
 .role-title-icon { display:grid; width:48px; height:48px; place-items:center; border-radius:1rem; background:color-mix(in srgb,var(--brand) 10%,white); color:var(--brand); }
@@ -145,7 +153,7 @@ a { color: inherit; text-decoration: none; }
 .role-metric { display:flex; min-height:105px; align-items:center; gap:.9rem; padding:1rem; border-radius:1.1rem !important; }
 .role-metric-icon { display:grid; width:42px; height:42px; flex:0 0 auto; place-items:center; border-radius:999px; background:color-mix(in srgb,var(--brand) 10%,white); color:var(--brand); }
 .role-metric-label { color:var(--muted-foreground); font-size:.72rem; font-weight:800; }
-.role-metric-value { margin-top:.18rem; color:var(--brand-deep); font-family:ui-monospace,Consolas,monospace; font-size:1.45rem; font-weight:900; }
+.role-metric-value { margin-top:.18rem; color:var(--brand-deep); font-family:var(--font-be-vietnam-pro),"Be Vietnam Pro","Segoe UI",Arial,sans-serif;font-variant-numeric:tabular-nums; font-size:1.45rem; font-weight:900; }
 .role-metric.tone-success .role-metric-icon,.role-metric.tone-success .role-metric-value { color:var(--success); }
 .role-metric.tone-success .role-metric-icon { background:#ecfdf3; }
 .role-metric.tone-warning .role-metric-icon,.role-metric.tone-warning .role-metric-value { color:#ea580c; }
@@ -209,7 +217,7 @@ a { color: inherit; text-decoration: none; }
 .sidebar-avatar { display:grid; width:34px; height:34px; place-items:center; border-radius:999px; background:rgba(255,255,255,.14); }
 .sidebar-logout { display:grid; width:30px; height:30px; place-items:center; border-radius:8px; color:#fff; }
 .app-topbar { background:#fff; color:var(--brand-deep); }
-.app-role-title { font-family:"Arial Narrow",Arial,sans-serif; font-size:18px; font-weight:900; letter-spacing:.02em; }
+.app-role-title { font-family:var(--font-be-vietnam-pro),"Be Vietnam Pro","Segoe UI",Arial,sans-serif; font-size:18px; font-weight:900; letter-spacing:.02em; }
 .app-role-subtitle { margin-top:2px; color:var(--muted-foreground); font-size:12px; }
 .desktop-menu-button { width:34px; height:34px; place-items:center; border:1px solid var(--border); border-radius:8px; background:white; color:var(--brand-deep); }
 .notification-button { position:relative; display:grid; width:36px; height:36px; place-items:center; border-radius:10px; }
@@ -240,7 +248,7 @@ a { color: inherit; text-decoration: none; }
 .exact-metric { display:flex; min-height:96px; align-items:center; gap:13px; border-radius:12px !important; padding:16px !important; box-shadow:0 2px 7px rgba(28,45,73,.06); }
 .exact-metric-icon { display:grid; width:48px; height:48px; flex:0 0 auto; place-items:center; border-radius:999px; background:#e7f1ff; color:#0b63ce; }
 .exact-metric-label { color:#1f2d3d; font-size:13px; font-weight:800; }
-.exact-metric-number { margin-top:3px; color:#0b63ce; font-family:ui-monospace,Consolas,monospace; font-size:27px; line-height:1; font-weight:900; }
+.exact-metric-number { margin-top:3px; color:#0b63ce; font-family:var(--font-be-vietnam-pro),"Be Vietnam Pro","Segoe UI",Arial,sans-serif;font-variant-numeric:tabular-nums; font-size:27px; line-height:1; font-weight:900; }
 .exact-metric-suffix { margin-top:4px; color:#69778a; font-size:11px; }
 .exact-metric.tone-green .exact-metric-icon,.exact-metric.tone-green .exact-metric-number { color:#15924a; }
 .exact-metric.tone-green .exact-metric-icon { background:#e9f8ef; }
@@ -262,7 +270,7 @@ a { color: inherit; text-decoration: none; }
 .exact-table-row:first-of-type { border-top:0; }
 .exact-table-row strong { font-size:13px; }
 .metric-number { text-align:center; }
-.metric-number strong { display:block; font-family:ui-monospace,Consolas,monospace; font-size:20px; line-height:1.05; }
+.metric-number strong { display:block; font-family:var(--font-be-vietnam-pro),"Be Vietnam Pro","Segoe UI",Arial,sans-serif;font-variant-numeric:tabular-nums; font-size:20px; line-height:1.05; }
 .metric-number small { color:#7a8795; font-size:10px; }
 .metric-number.tone-green strong { color:#15924a; }
 .metric-number.tone-blue strong { color:#0b63ce; }
@@ -322,7 +330,7 @@ a { color: inherit; text-decoration: none; }
 .request-tabs span { border:1px solid #d9e2ee; border-radius:9px; background:#fff; padding:8px 12px; color:#647386; font-size:11px; font-weight:800; }
 .request-tabs .active { border-color:#0b63ce; background:#0b63ce; color:#fff; }
 .manager-detail-card { align-self:start; }
-.manager-detail-code { display:inline-flex; margin-top:16px; border-radius:8px; background:#eaf2ff; padding:7px 9px; color:#0b63ce; font-family:ui-monospace,Consolas,monospace; font-weight:900; }
+.manager-detail-code { display:inline-flex; margin-top:16px; border-radius:8px; background:#eaf2ff; padding:7px 9px; color:#0b63ce; font-family:var(--font-be-vietnam-pro),"Be Vietnam Pro","Segoe UI",Arial,sans-serif;font-variant-numeric:tabular-nums; font-weight:900; }
 .manager-meta { display:grid; grid-template-columns:90px 1fr; gap:8px 12px; margin-top:16px; font-size:12px; }
 .manager-meta span { color:#78869a; }
 .manager-items { margin-top:16px; overflow:hidden; border:1px solid #e2e8f0; border-radius:10px; }
@@ -335,7 +343,7 @@ a { color: inherit; text-decoration: none; }
 .management-cost-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-top:14px; }
 .management-total { display:flex; align-items:center; justify-content:space-between; margin-top:12px; border-radius:10px; background:#f5f8fc; padding:14px; }
 .management-total span { color:#6e7c8e; font-weight:800; }
-.management-total strong { color:#0b2f59; font-family:ui-monospace,Consolas,monospace; font-size:20px; }
+.management-total strong { color:#0b2f59; font-family:var(--font-be-vietnam-pro),"Be Vietnam Pro","Segoe UI",Arial,sans-serif;font-variant-numeric:tabular-nums; font-size:20px; }
 .management-actions { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
 .admin-tabs { display:flex; overflow-x:auto; border:1px solid #e1e7ef; border-radius:11px; background:#fff; }
 .admin-tabs a { min-width:120px; padding:13px 18px; border-right:1px solid #e7ebf1; color:#536276; text-align:center; font-size:12px; font-weight:800; }
@@ -364,4 +372,66 @@ a { color: inherit; text-decoration: none; }
   .management-actions { grid-template-columns:repeat(3,minmax(0,1fr)); }
   .manager-main-grid,.storekeeper-work-grid,.management-two-grid,.admin-exact-grid { grid-template-columns:1fr; }
   .activity-head.supplier,.activity-row.supplier,.activity-head.manager,.activity-row.manager,.activity-head.management,.activity-row.management { min-width:700px; }
+}
+
+
+/* V1.0.20 — Be Vietnam Pro + unified soft-card visual language */
+:root {
+  --heading-foreground:#0f2747;
+  --body-foreground:#344054;
+  --subtle:#667085;
+  --card-shadow:0 8px 24px rgba(15,39,71,.07);
+  --card-shadow-soft:0 3px 12px rgba(15,39,71,.06);
+}
+body { color:var(--body-foreground); }
+h1,h2,h3,h4,h5,h6 { color:var(--heading-foreground); font-family:var(--font-be-vietnam-pro),"Be Vietnam Pro","Segoe UI",Arial,sans-serif; letter-spacing:-.018em; }
+.surface,.role-card,.cost-tile,.role-metric,.role-list-row,.gas-summary-row,.admin-role-tile {
+  border-color:#e4e9f0 !important;
+  border-radius:18px !important;
+  box-shadow:var(--card-shadow-soft);
+}
+.role-main { background:transparent; }
+.app-topbar { font-family:var(--font-be-vietnam-pro),"Be Vietnam Pro","Segoe UI",Arial,sans-serif; }
+.app-role-title { letter-spacing:-.02em; font-weight:700; }
+.app-role-subtitle { font-weight:400; }
+.sidebar-link { font-weight:600; letter-spacing:-.01em; }
+.sidebar-brand-text strong { font-weight:700; }
+.role-page-heading h1 { font-family:var(--font-be-vietnam-pro),"Be Vietnam Pro","Segoe UI",Arial,sans-serif; font-weight:700; letter-spacing:-.025em; text-transform:none; }
+.role-kicker { font-weight:600; letter-spacing:.04em; }
+.role-metric-label { font-weight:500; }
+.role-metric-value { font-weight:700; letter-spacing:-.025em; }
+button { letter-spacing:-.01em; }
+input,select,textarea { color:var(--body-foreground); }
+::placeholder { color:#98a2b3; opacity:1; }
+
+/* Mobile inherits the approved Nhóm CBL visual language */
+@media (max-width:767px) {
+  .app-topbar {
+    min-height:110px !important;
+    align-items:flex-start !important;
+    padding:18px 18px 26px !important;
+    border:0 !important;
+    background:linear-gradient(135deg,#064489 0%,#0058a9 55%,#004a8f 100%) !important;
+    color:#fff !important;
+    box-shadow:0 8px 24px rgba(0,43,85,.16);
+  }
+  .app-role-title { color:#fff !important; font-size:1.55rem !important; line-height:1.15; font-weight:700; }
+  .app-role-subtitle { margin-top:4px; color:rgba(255,255,255,.78) !important; font-size:.86rem; }
+  .notification-button { color:#fff !important; }
+  .role-main { margin-top:-14px; padding-left:12px !important; padding-right:12px !important; }
+  .surface,.role-card,.role-metric,.role-list-row,.gas-summary-row,.cost-tile {
+    border-radius:20px !important;
+    box-shadow:0 6px 18px rgba(15,39,71,.07);
+  }
+  .group-hero { display:none !important; }
+  .mobile-role-nav { border-radius:18px 18px 0 0; box-shadow:0 -8px 24px rgba(15,39,71,.09); }
+  .mobile-nav-link { font-weight:600; }
+}
+
+/* Desktop uses the same cards, typography and spacing without becoming oversized */
+@media (min-width:768px) {
+  .app-topbar { background:rgba(255,255,255,.96) !important; backdrop-filter:blur(14px); }
+  .role-main { padding:24px 26px 34px !important; }
+  .surface,.role-card { border-radius:20px !important; }
+  .role-metric { min-height:112px; }
 }

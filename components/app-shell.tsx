@@ -88,7 +88,7 @@ export function AppShell({ profile, children }: { profile: Profile; children: Re
       <nav className="flex-1 space-y-1 p-3 pt-5">{nav.map(({href,label,icon:Icon},index)=><Link key={`${href}-${label}`} href={href} className={`sidebar-link ${index===0?"sidebar-link-active":""}`}><Icon size={18}/><span>{label}</span></Link>)}</nav>
       <div className="sidebar-footer">
         <div className="sidebar-avatar"><UserCircle size={28}/></div>
-        <div className="min-w-0 flex-1"><div className="truncate font-bold text-white">{profile.full_name}</div><div className="truncate text-[11px] text-white/65">{ROLE_LABELS[profile.role]}</div></div>
+        <div className="min-w-0 flex-1"><div className="truncate font-semibold text-white">{profile.full_name}</div><div className="truncate text-[11px] text-white/65">{ROLE_LABELS[profile.role]}</div></div>
         <form action="/api/auth/logout" method="post"><button aria-label="Đăng xuất" className="sidebar-logout"><LogOut size={16}/></button></form>
       </div>
     </aside>
@@ -100,7 +100,7 @@ export function AppShell({ profile, children }: { profile: Profile; children: Re
           <div className="md:hidden"><Image src="/brand/company-symbol.png" width={44} height={54} alt="Vicem Hà Tiên" className="h-10 w-auto brightness-0 invert"/></div>
           <div className="min-w-0"><div className="app-role-title truncate">{roleTitle(profile)}</div><div className="app-role-subtitle truncate">{roleSubtitle(profile)}</div></div>
         </div>
-        <div className="flex items-center gap-3"><button aria-label="Thông báo" className="notification-button"><Bell size={21}/><span className="notification-dot"/></button><div className="hidden h-8 w-px bg-current/15 md:block"/><div className="hidden items-center gap-2 md:flex"><UserCircle size={31}/><div className="text-right"><div className="text-sm font-bold">{profile.full_name}</div><div className="text-[11px] opacity-70">{ROLE_LABELS[profile.role]}</div></div></div><form action="/api/auth/logout" method="post" className="md:hidden"><button aria-label="Đăng xuất" className="rounded-xl p-2"><LogOut size={18}/></button></form></div>
+        <div className="flex items-center gap-3"><button aria-label="Thông báo" className="notification-button"><Bell size={21}/><span className="notification-dot"/></button><div className="hidden h-8 w-px bg-current/15 md:block"/><div className="hidden items-center gap-2 md:flex"><UserCircle size={31}/><div className="text-right"><div className="text-sm font-semibold">{profile.full_name}</div><div className="text-[11px] opacity-70">{ROLE_LABELS[profile.role]}</div></div></div><form action="/api/auth/logout" method="post" className="md:hidden"><button aria-label="Đăng xuất" className="rounded-xl p-2"><LogOut size={18}/></button></form></div>
       </header>
       <main className="role-main mx-auto w-full max-w-[1500px] p-3 pb-24 sm:p-4 md:p-5 md:pb-8">{children}</main>
     </div>
