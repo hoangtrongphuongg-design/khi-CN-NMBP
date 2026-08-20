@@ -583,6 +583,8 @@ button,a,input,select,textarea { font-weight:500; }
 .cost-summary-period{margin-top:3px;font-size:.7rem;color:var(--muted-foreground)}
 .cost-summary-link{grid-column:2;font-size:.74rem;font-weight:600;color:var(--brand)}
 .overview-main-grid{display:grid;gap:14px}
+.rental-group-stack{display:grid;gap:14px;align-content:start}
+.rental-group-stack.is-compact{gap:10px}
 .overview-panel{padding:17px!important;border-radius:20px!important}
 .overview-panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
 .overview-panel-head p{margin:4px 0 0;font-size:.75rem;color:var(--muted-foreground)}
@@ -597,13 +599,7 @@ button,a,input,select,textarea { font-weight:500; }
 .rental-track{height:10px;overflow:hidden;border-radius:999px;background:#e9eef4}
 .rental-track i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--brand),#2a83cf)}
 .rental-qty{text-align:right;color:var(--brand-deep);font-size:1rem;font-weight:700;font-variant-numeric:tabular-nums}
-.rental-movement{display:grid;grid-template-columns:repeat(7,auto);align-items:center;gap:5px;margin-top:17px;padding:11px;border-radius:13px;background:#f7f9fc;overflow-x:auto}
-.rental-movement div{min-width:72px;text-align:center}
-.rental-movement span{display:block;font-size:.62rem;color:var(--muted-foreground)}
-.rental-movement strong{display:block;margin-top:2px;font-size:.9rem;color:var(--brand-deep);font-variant-numeric:tabular-nums}
-.rental-movement .positive strong{color:var(--success)}
-.rental-movement .negative strong{color:var(--danger)}
-.rental-movement b{color:#98a2b3}
+.rental-empty{padding:10px 12px;border-radius:12px;background:#f7f9fc;color:var(--muted-foreground);font-size:.72rem}
 .attention-list{display:grid;gap:9px;margin-top:15px}
 .attention-item{display:grid;grid-template-columns:42px 1fr auto;align-items:center;gap:11px;padding:11px;border:1px solid var(--border);border-radius:14px;background:#fff}
 .attention-item:hover{border-color:#8cb9e5;background:#f8fbff}
@@ -782,7 +778,6 @@ button,a,input,select,textarea { font-weight:500; }
   .overview-quick-grid{grid-template-columns:1fr}
   .rental-row{grid-template-columns:105px 1fr 38px;gap:7px}
   .rental-name strong{font-size:.73rem}
-  .rental-movement{grid-template-columns:repeat(7,max-content);justify-content:start}
   .warehouse-qty-grid{grid-template-columns:1fr 1fr}
   .warehouse-qty-grid .total{grid-column:1/-1}
   .warehouse-panel-head{display:grid;gap:11px}

@@ -65,7 +65,7 @@ async function WorkshopHome({ profile }: { profile: Profile }) {
   return <div className="overview-page">
     <PageHeading title="Tổng quan" subtitle="Nhìn nhanh tình trạng hệ thống và các việc cần xử lý."/>
     <MetricGrid>
-      <Metric icon={<Boxes/>} label="Vỏ đang thuê NCC" value={rental.totalCurrent} suffix="vỏ"/>
+      <Metric icon={<Boxes/>} label="Vỏ chai khí CN" value={rental.totalCurrent} suffix="vỏ"/>
       <Metric icon={<Truck/>} label="Giao nhận hôm nay" value={todayDeliveries} suffix="chuyến"/>
       <Metric icon={<ClipboardCheck/>} label="Phiếu cần xử lý" value={actionTotal} suffix="phiếu"/>
       <Metric icon={<AlertTriangle/>} label="Cảnh báo" value={alerts} tone={alerts ? "warning" : "success"}/>
@@ -108,7 +108,7 @@ async function WarehouseManagerHome({ profile }: { profile: Profile }) {
       <Metric icon={<ClipboardCheck/>} label="Phiếu cần xử lý" value={actionTotal} suffix="phiếu"/>
       <Metric icon={<MessageCircleWarning/>} label="Phiếu chênh lệch" value={discrepancy} suffix="phiếu" tone={discrepancy ? "warning" : "success"}/>
       <Metric icon={<AlertTriangle/>} label="Tồn thấp" value={data.lowStock.length} suffix="loại" tone={data.lowStock.length ? "warning" : "success"}/>
-      <Metric icon={<Boxes/>} label="Vỏ đang thuê NCC" value={rental.totalCurrent} suffix="vỏ"/>
+      <Metric icon={<Boxes/>} label="Vỏ chai khí CN" value={rental.totalCurrent} suffix="vỏ"/>
     </MetricGrid>
     <CostSummary costs={costs}/>
     <div className="overview-main-grid">
@@ -261,7 +261,7 @@ async function ManagementHome({ profile }: { profile: Profile }) {
   return <div className="overview-page">
     <PageHeading title="Tổng quan" subtitle="Góc nhìn quản lý: số vỏ thuê, chi phí và các vấn đề cần chú ý."/>
     <MetricGrid>
-      <Metric icon={<Boxes/>} label="Vỏ đang thuê NCC" value={rental.totalCurrent} suffix="vỏ"/>
+      <Metric icon={<Boxes/>} label="Vỏ chai khí CN" value={rental.totalCurrent} suffix="vỏ"/>
       <Metric icon={<ClipboardCheck/>} label="Phiếu đang tồn" value={pending} suffix="phiếu"/>
       <Metric icon={<AlertTriangle/>} label="Cảnh báo" value={data.lowStock.length} tone={data.lowStock.length ? "warning" : "success"}/>
     </MetricGrid>
@@ -320,11 +320,24 @@ function CostSummary({ costs }: { costs: Awaited<ReturnType<typeof getCostSnapsh
 }
 
 function RentalPanel({ rental, compact = false }: { rental: Awaited<ReturnType<typeof getRentalSnapshot>>; compact?: boolean }) {
-  const max = Math.max(...rental.rows.map((r) => r.current_qty), 1);
-  return <Card className="overview-panel rental-panel"><div className="overview-panel-head"><div><CardTitle>Vỏ đang thuê của NCC</CardTitle><p>Số dư đầu kỳ + NCC giao − trả NCC</p></div><div className="rental-total"><strong>{formatNumber(rental.totalCurrent)}</strong><span>vỏ</span></div></div>
-    <div className="rental-bars">{rental.rows.slice(0, compact ? 5 : 10).map((row) => <div key={row.product_code} className="rental-row"><div className="rental-name"><strong>{row.product_name}</strong><span>{row.product_code}</span></div><div className="rental-track"><i style={{ width: `${Math.max((row.current_qty/max)*100, row.current_qty > 0 ? 5 : 0)}%` }}/></div><div className="rental-qty">{formatNumber(row.current_qty)}</div></div>)}</div>
-    <div className="rental-movement"><div><span>Đầu kỳ</span><strong>{formatNumber(rental.totalOpening)}</strong></div><b>→</b><div className="positive"><span>NCC giao</span><strong>+{formatNumber(rental.totalIn)}</strong></div><b>→</b><div className="negative"><span>Trả NCC</span><strong>-{formatNumber(rental.totalOut)}</strong></div><b>→</b><div><span>Hiện tại</span><strong>{formatNumber(rental.totalCurrent)}</strong></div></div>
-  </Card>;
+  return <section className={`rental-group-stack${compact ? " is-compact" : ""}`} aria-label="Vỏ và bồn đang giữ của NCC">
+    {rental.groups.map((group) => {
+      const max = Math.max(...group.rows.map((r) => r.current_qty), 1);
+      return <Card className="overview-panel rental-panel" key={group.key}>
+        <div className="overview-panel-head">
+          <div><CardTitle>{group.title}</CardTitle><p>Số lượng NMBP đang giữ của NCC</p></div>
+          <div className="rental-total"><strong>{formatNumber(group.totalCurrent)}</strong><span>{group.unitLabel}</span></div>
+        </div>
+        <div className="rental-bars">
+          {group.rows.length ? group.rows.map((row) => <div key={row.product_code} className="rental-row">
+            <div className="rental-name"><strong>{row.product_name}</strong><span>{row.product_code}</span></div>
+            <div className="rental-track"><i style={{ width: `${Math.max((row.current_qty / max) * 100, row.current_qty > 0 ? 5 : 0)}%` }}/></div>
+            <div className="rental-qty">{formatNumber(row.current_qty)}</div>
+          </div>) : <div className="rental-empty">Chưa có danh mục sản phẩm trong nhóm này.</div>}
+        </div>
+      </Card>;
+    })}
+  </section>;
 }
 
 type AttentionItem = { count: number; title: string; href: string; subtitle: string; tone: "info" | "warning" | "danger" };

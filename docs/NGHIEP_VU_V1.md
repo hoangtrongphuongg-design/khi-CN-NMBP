@@ -357,3 +357,16 @@ Có cơ cấu chi phí, xu hướng, top loại khí, bảng tổng hợp theo l
 - Cảnh báo tồn thấp nằm ngay trên dòng tương ứng, không tạo tab cảnh báo riêng.
 - Header Kho hiển thị tổng nhanh: Tổng vỏ, Đầy, Rỗng.
 - Mobile dùng card compact một dòng sản phẩm với 3 chỉ số Đầy / Rỗng / Tổng vỏ, giữ cùng thứ tự và logic trạng thái với desktop; không có bảng kéo ngang.
+
+## Vỏ/bồn NCC trên Tổng quan (V1.0.29)
+
+- Bỏ dòng biến động `Đầu kỳ → NCC giao → Trả NCC → Hiện tại` khỏi Tổng quan.
+- Hiển thị bung sẵn 4 nhóm độc lập, không cộng khác đơn vị vào một tổng chung:
+  1. **Vỏ chai khí công nghiệp**: O₂, CO₂, N₂, Argon, Ar/CO₂ và các khí đóng chai tương tự.
+  2. **Bồn XL-45**: O₂ lỏng XL-45, N₂ lỏng XL-45.
+  3. **Bình Gas 12 kg**: LPG 12 kg.
+  4. **Bình Gas 45 kg**: LPG 45 kg.
+- Mỗi nhóm giữ phong cách thanh ngang hiện có: tên sản phẩm, thanh tỷ lệ và số lượng hiện tại ở bên phải.
+- Dữ liệu hiện tại = số dư đầu kỳ + Phiếu giao NCC đã hoàn tất - Phiếu trả NCC; không dùng luân chuyển nội bộ để tính.
+- KPI `Vỏ chai khí CN` chỉ là tổng nhóm chai khí công nghiệp; XL-45 và LPG hiển thị riêng vì khác đơn vị.
+

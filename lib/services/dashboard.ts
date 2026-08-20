@@ -111,66 +111,111 @@ export type RentalSnapshotRow = {
   current_qty: number;
 };
 
-export type RentalSnapshot = {
-  asOfDate: string;
-  totalOpening: number;
-  totalIn: number;
-  totalOut: number;
+export type RentalSnapshotGroupKey = "industrial" | "xl45" | "lpg12" | "lpg45";
+
+export type RentalSnapshotGroup = {
+  key: RentalSnapshotGroupKey;
+  title: string;
+  unitLabel: string;
   totalCurrent: number;
   rows: RentalSnapshotRow[];
 };
 
+export type RentalSnapshot = {
+  asOfDate: string;
+  /** Giữ tương thích KPI cũ: tổng vỏ chai khí công nghiệp, không cộng XL-45/LPG khác đơn vị. */
+  totalCurrent: number;
+  groups: RentalSnapshotGroup[];
+};
+
+const rentalGroupMeta: Record<RentalSnapshotGroupKey, { title: string; unitLabel: string }> = {
+  industrial: { title: "Vỏ chai khí công nghiệp", unitLabel: "vỏ" },
+  xl45: { title: "Bồn XL-45", unitLabel: "bồn" },
+  lpg12: { title: "Bình Gas 12 kg", unitLabel: "bình" },
+  lpg45: { title: "Bình Gas 45 kg", unitLabel: "bình" },
+};
+
+function rentalGroupKey(productCode: string): RentalSnapshotGroupKey {
+  if (["LOX-XL45", "LIN-XL45"].includes(productCode)) return "xl45";
+  if (productCode === "LPG12") return "lpg12";
+  if (productCode === "LPG45") return "lpg45";
+  return "industrial";
+}
+
 /**
- * Vỏ đang thuê NCC = số dư đầu kỳ + NCC giao - trả NCC.
- * Không dùng phân bổ Kho/Nhóm/Mỏ để tránh đếm đôi.
+ * Số vật chứa hiện còn của NCC = số dư đầu kỳ + NCC giao đã hoàn tất - trả NCC.
+ * Tách thành 4 nhóm khác đơn vị: chai khí CN, XL-45, LPG12, LPG45.
+ * Không cộng các nhóm khác đơn vị vào một tổng chung.
  */
 export async function getRentalSnapshot(): Promise<RentalSnapshot> {
   const today = toDateInput();
   const yearStart = `${today.slice(0, 4)}-01-01`;
   const endDateExclusive = addDays(today, 1);
-  const [opening, daily] = await Promise.all([
-    sql<any[]>`
-      SELECT p.code AS product_code,p.name AS product_name,COALESCE(ob.qty,0)::float8 AS opening_qty
-      FROM products p
-      LEFT JOIN supplier_container_opening_balances ob ON ob.product_id=p.id AND ob.opening_date=${yearStart}::date
-      WHERE p.active=true AND p.cylinder_rental_eligible=true
-      ORDER BY p.display_order,p.name
-    `,
-    getCylinderRentalDaily({ startDate: yearStart, endDateExclusive }),
-  ]);
 
-  const byProduct = new Map<string, RentalSnapshotRow>();
-  for (const row of opening) {
-    byProduct.set(String(row.product_code), {
+  const sourceRows = await sql<any[]>`
+    SELECT
+      p.code AS product_code,
+      p.name AS product_name,
+      p.display_order,
+      COALESCE(ob.qty,0)::float8 AS opening_qty,
+      COALESCE(SUM(CASE
+        WHEN sl.reference_type IN ('supplier_delivery','supplier_delivery_mine') AND sl.delta>0 THEN sl.delta
+        ELSE 0
+      END),0)::float8 AS supplier_in,
+      COALESCE(SUM(CASE
+        WHEN sl.reference_type='supplier_return' AND sl.delta<0 THEN -sl.delta
+        ELSE 0
+      END),0)::float8 AS supplier_out
+    FROM products p
+    LEFT JOIN supplier_container_opening_balances ob
+      ON ob.product_id=p.id
+     AND ob.opening_date=${yearStart}::date
+    LEFT JOIN stock_ledger sl
+      ON sl.product_id=p.id
+     AND sl.occurred_at >= (${yearStart}::date AT TIME ZONE 'Asia/Ho_Chi_Minh')
+     AND sl.occurred_at < (${endDateExclusive}::date AT TIME ZONE 'Asia/Ho_Chi_Minh')
+     AND sl.reference_type IN ('supplier_delivery','supplier_delivery_mine','supplier_return')
+    WHERE p.active=true
+      AND p.returnable_container=true
+    GROUP BY p.id,p.code,p.name,p.display_order,ob.qty
+    ORDER BY p.display_order,p.name
+  `;
+
+  const buckets: Record<RentalSnapshotGroupKey, RentalSnapshotRow[]> = {
+    industrial: [],
+    xl45: [],
+    lpg12: [],
+    lpg45: [],
+  };
+
+  for (const row of sourceRows) {
+    const opening = Number(row.opening_qty || 0);
+    const supplierIn = Number(row.supplier_in || 0);
+    const supplierOut = Number(row.supplier_out || 0);
+    const item: RentalSnapshotRow = {
       product_code: String(row.product_code),
       product_name: String(row.product_name),
-      opening_qty: Number(row.opening_qty || 0),
-      supplier_in: 0,
-      supplier_out: 0,
-      current_qty: Number(row.opening_qty || 0),
-    });
-  }
-  for (const row of daily) {
-    const item = byProduct.get(row.product_code) || {
-      product_code: row.product_code,
-      product_name: row.product_name,
-      opening_qty: 0,
-      supplier_in: 0,
-      supplier_out: 0,
-      current_qty: 0,
+      opening_qty: opening,
+      supplier_in: supplierIn,
+      supplier_out: supplierOut,
+      current_qty: Math.max(0, opening + supplierIn - supplierOut),
     };
-    item.supplier_in += Number(row.supplier_in || 0);
-    item.supplier_out += Number(row.supplier_out || 0);
-    if (row.day === today) item.current_qty = Number(row.held_qty || 0);
-    byProduct.set(row.product_code, item);
+    buckets[rentalGroupKey(item.product_code)].push(item);
   }
-  const rows = [...byProduct.values()].filter((x) => x.opening_qty > 0 || x.supplier_in > 0 || x.supplier_out > 0 || x.current_qty > 0);
+
+  const groupOrder: RentalSnapshotGroupKey[] = ["industrial", "xl45", "lpg12", "lpg45"];
+  const groups = groupOrder.map((key): RentalSnapshotGroup => ({
+    key,
+    title: rentalGroupMeta[key].title,
+    unitLabel: rentalGroupMeta[key].unitLabel,
+    rows: buckets[key],
+    totalCurrent: buckets[key].reduce((sum, item) => sum + item.current_qty, 0),
+  }));
+
   return {
     asOfDate: today,
-    totalOpening: rows.reduce((s, x) => s + x.opening_qty, 0),
-    totalIn: rows.reduce((s, x) => s + x.supplier_in, 0),
-    totalOut: rows.reduce((s, x) => s + x.supplier_out, 0),
-    totalCurrent: rows.reduce((s, x) => s + x.current_qty, 0),
-    rows,
+    totalCurrent: groups.find((group) => group.key === "industrial")?.totalCurrent ?? 0,
+    groups,
   };
 }
+
