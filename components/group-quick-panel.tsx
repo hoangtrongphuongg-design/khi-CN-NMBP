@@ -18,7 +18,7 @@ type ProductQuick = {
   normQty: number;
 };
 
-type DraftItem = { productId: string; quantity: number };
+type DraftItem = { productId: string; quantity: string };
 
 type Props = {
   groupName: string;
@@ -75,7 +75,7 @@ export function GroupQuickPanel({ groupName, products, canCreate, pendingCount =
     if (!canCreate) return;
     const first = preferredProduct(nextMode);
     setMode(nextMode);
-    setItems(first ? [{ productId: first.id, quantity: 1 }] : []);
+    setItems(first ? [{ productId: first.id, quantity: "" }] : []);
     setNote("");
     setConfirmOpen(false);
   }
@@ -106,24 +106,41 @@ export function GroupQuickPanel({ groupName, products, canCreate, pendingCount =
     return undefined;
   }
 
-  function updateQty(index: number, value: number) {
+  function quantityNumber(value: string) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? Math.floor(parsed) : 0;
+  }
+
+  function updateQty(index: number, value: string) {
+    const digits = value.replace(/\D/g, "");
+    setItems((prev) => prev.map((item, i) => {
+      if (i !== index) return item;
+      if (!digits) return { ...item, quantity: "" };
+      const max = maxFor(item);
+      const parsed = quantityNumber(digits);
+      return { ...item, quantity: String(max != null && max > 0 ? Math.min(parsed, max) : parsed) };
+    }));
+  }
+
+  function stepQty(index: number, delta: number) {
     setItems((prev) => prev.map((item, i) => {
       if (i !== index) return item;
       const max = maxFor(item);
-      const next = Math.max(1, Math.floor(value || 1));
-      return { ...item, quantity: max != null && max > 0 ? Math.min(next, max) : next };
+      const current = quantityNumber(item.quantity);
+      const next = Math.max(1, current + delta || 1);
+      return { ...item, quantity: String(max != null && max > 0 ? Math.min(next, max) : next) };
     }));
   }
 
   function updateProduct(index: number, productId: string) {
-    setItems((prev) => prev.map((item, i) => i === index ? { productId, quantity: 1 } : item));
+    setItems((prev) => prev.map((item, i) => i === index ? { productId, quantity: "" } : item));
   }
 
   function addItem() {
     const used = new Set(items.map((x) => x.productId));
     const candidates = mode === "borrow" ? products : products.filter((p) => p.groupQty > 0);
     const next = candidates.find((p) => !used.has(p.id)) || products.find((p) => !used.has(p.id));
-    if (next) setItems((prev) => [...prev, { productId: next.id, quantity: 1 }]);
+    if (next) setItems((prev) => [...prev, { productId: next.id, quantity: "" }]);
   }
 
   function removeItem(index: number) {
@@ -143,8 +160,9 @@ export function GroupQuickPanel({ groupName, products, canCreate, pendingCount =
     if (new Set(items.map((x) => x.productId)).size !== items.length) return "Một loại khí chỉ được xuất hiện một lần trong phiếu.";
     for (const item of items) {
       const product = productFor(item.productId);
-      if (!product || item.quantity <= 0) return "Số lượng phải lớn hơn 0.";
-      if ((mode === "return" || mode === "exchange") && item.quantity > product.groupQty) return `${product.name}: số lượng không được lớn hơn số chai tại nhóm (${formatNumber(product.groupQty)}).`;
+      const quantity = quantityNumber(item.quantity);
+      if (!product || quantity <= 0) return "Số lượng phải lớn hơn 0.";
+      if ((mode === "return" || mode === "exchange") && quantity > product.groupQty) return `${product.name}: số lượng không được lớn hơn số chai tại nhóm (${formatNumber(product.groupQty)}).`;
     }
     return null;
   }
@@ -167,7 +185,7 @@ export function GroupQuickPanel({ groupName, products, canCreate, pendingCount =
       const form = new FormData();
       form.set("action", "create");
       form.set("request_type", mode);
-      form.set("items_json", JSON.stringify(items));
+      form.set("items_json", JSON.stringify(items.map((item) => ({ ...item, quantity: quantityNumber(item.quantity) }))));
       form.set("note", note);
       const response = await fetch("/api/internal", { method: "POST", body: form, headers: { Accept: "application/json" } });
       const payload = await response.json().catch(() => ({}));
@@ -241,11 +259,12 @@ export function GroupQuickPanel({ groupName, products, canCreate, pendingCount =
               if (!product) return null;
               const t = tone(product.code);
               const max = maxFor(item);
-              const borrowAfter = product.groupQty + item.quantity;
+              const quantity = quantityNumber(item.quantity);
+              const borrowAfter = product.groupQty + quantity;
               const overNorm = mode === "borrow" && product.normQty > 0 && borrowAfter > product.normQty;
               return <div key={`${item.productId}-${index}`} className="grid gap-3 border-b border-[var(--border)] p-3 last:border-b-0 md:grid-cols-[1.3fr_1fr_.8fr_auto] md:items-center">
                 <label className="grid gap-1"><span className="text-[11px] font-bold uppercase tracking-wide text-[var(--muted-foreground)]">Loại khí</span><div className="flex items-center gap-2"><div className={`grid h-9 w-9 place-items-center rounded-xl ${t.icon}`}><Boxes size={19}/></div><select value={item.productId} onChange={(e) => updateProduct(index, e.target.value)} className="min-h-10 min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-white px-2.5 font-bold">{products.filter((p) => p.id === item.productId || !items.some((x, i) => i !== index && x.productId === p.id)).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div></label>
-                <div><div className="text-[11px] font-bold uppercase tracking-wide text-[var(--muted-foreground)]">SL yêu cầu</div><div className="mt-1 grid grid-cols-[40px_1fr_40px] overflow-hidden rounded-xl border border-[var(--border)]"><button type="button" onClick={() => updateQty(index, item.quantity - 1)} className="grid min-h-11 place-items-center hover:bg-[var(--muted)]"><Minus size={17}/></button><input className="min-w-0 border-x border-[var(--border)] text-center font-mono-data text-lg font-bold outline-none" inputMode="numeric" type="number" min="1" max={max && max > 0 ? max : undefined} value={item.quantity} onChange={(e) => updateQty(index, Number(e.target.value))}/><button type="button" onClick={() => updateQty(index, item.quantity + 1)} className="grid min-h-11 place-items-center hover:bg-[var(--muted)]"><Plus size={17}/></button></div></div>
+                <div><div className="text-[11px] font-bold uppercase tracking-wide text-[var(--muted-foreground)]">SL yêu cầu</div><div className="mt-1 grid grid-cols-[40px_1fr_40px] overflow-hidden rounded-xl border border-[var(--border)]"><button type="button" onClick={() => stepQty(index, -1)} className="grid min-h-11 place-items-center hover:bg-[var(--muted)]"><Minus size={17}/></button><input className="min-w-0 border-x border-[var(--border)] text-center font-mono-data text-lg font-bold outline-none" inputMode="numeric" pattern="[0-9]*" type="text" autoComplete="off" placeholder="SL" value={item.quantity} onChange={(e) => updateQty(index, e.target.value)}/><button type="button" onClick={() => stepQty(index, 1)} className="grid min-h-11 place-items-center hover:bg-[var(--muted)]"><Plus size={17}/></button></div></div>
                 <div className="rounded-xl bg-[var(--paper)] px-3 py-2 text-center"><div className="text-[11px] font-bold uppercase tracking-wide text-[var(--muted-foreground)]">{mode === "return" ? "Nhóm đang có" : "Kho còn đầy"}</div><div className={`font-mono-data mt-0.5 text-xl font-bold ${mode === "return" ? t.number : "text-[var(--success)]"}`}>{formatNumber(mode === "return" ? product.groupQty : product.warehouseFull)}</div>{overNorm ? <div className="mt-1 text-[10px] font-bold text-[var(--warning)]">Vượt định mức +{formatNumber(borrowAfter - product.normQty)}</div> : null}</div>
                 <button type="button" onClick={() => removeItem(index)} disabled={items.length <= 1} className="justify-self-end rounded-xl p-2.5 text-[var(--danger)] hover:bg-red-50 disabled:opacity-30" aria-label="Xóa dòng"><Trash2 size={19}/></button>
               </div>;
@@ -263,7 +282,7 @@ export function GroupQuickPanel({ groupName, products, canCreate, pendingCount =
       {confirmOpen && mode ? <div className="fixed inset-0 z-[95] grid place-items-center bg-slate-950/45 p-4">
         <div className="w-full max-w-sm rounded-2xl border border-[var(--border)] bg-white p-5 shadow-2xl">
           <div className="flex gap-3"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-blue-50 text-[var(--brand)]"><AlertTriangle size={20}/></div><div><h3 className="m-0 text-base font-bold">Xác nhận gửi yêu cầu {MODE_LABEL[mode]}?</h3><p className="mb-0 mt-2 text-sm leading-6 text-[var(--muted-foreground)]">Phiếu gồm {items.length} loại khí. Hệ thống sẽ lưu đúng số lượng anh/chị đang nhập.</p></div></div>
-          <div className="mt-4 rounded-xl bg-[var(--paper)] p-3 text-sm">{items.map((item) => { const p = productFor(item.productId); return p ? <div key={item.productId} className="flex justify-between gap-3 py-1"><span>{p.name}</span><strong className="font-mono-data">{formatNumber(item.quantity)} {p.unit}</strong></div> : null; })}</div>
+          <div className="mt-4 rounded-xl bg-[var(--paper)] p-3 text-sm">{items.map((item) => { const p = productFor(item.productId); return p ? <div key={item.productId} className="flex justify-between gap-3 py-1"><span>{p.name}</span><strong className="font-mono-data">{formatNumber(quantityNumber(item.quantity))} {p.unit}</strong></div> : null; })}</div>
           <div className="mt-5 grid grid-cols-2 gap-2"><button type="button" onClick={() => setConfirmOpen(false)} className="min-h-11 rounded-xl border border-[var(--border)] font-bold">Quay lại</button><button type="button" onClick={submit} disabled={submitting} className="min-h-11 rounded-xl bg-[var(--brand)] font-bold text-white disabled:opacity-50">{submitting ? "Đang gửi..." : "Xác nhận"}</button></div>
         </div>
       </div> : null}

@@ -8,7 +8,7 @@ import { Select } from "@/components/ui/select";
 import { FormField } from "@/components/ui/form-field";
 
 type Product = { id: string; name: string; unit: string; returnable_container: boolean };
-type Line = { key: string; productId: string; quantity: number };
+type Line = { key: string; productId: string; quantity: string };
 
 export function SupplierReturnForm({
   products,
@@ -23,9 +23,10 @@ export function SupplierReturnForm({
 }) {
   const available = products.filter((p) => p.returnable_container);
   const [lines, setLines] = useState<Line[]>([
-    { key: crypto.randomUUID(), productId: available[0]?.id || "", quantity: 1 },
+    { key: crypto.randomUUID(), productId: available[0]?.id || "", quantity: "" },
   ]);
-  const payload = useMemo(() => lines.map(({ productId, quantity }) => ({ productId, quantity })), [lines]);
+  const payload = useMemo(() => lines.map(({ productId, quantity }) => ({ productId, quantity: Number(quantity || 0) })), [lines]);
+  const canSubmit = lines.length > 0 && lines.every((line) => line.productId && Number(line.quantity) > 0);
 
   return (
     <form action="/api/deliveries" method="post" className="grid gap-3">
@@ -50,11 +51,13 @@ export function SupplierReturnForm({
           </FormField>
           <FormField label="Số lượng trả">
             <Input
-              type="number"
-              min="1"
-              step="1"
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              autoComplete="off"
+              placeholder="Nhập SL"
               value={line.quantity}
-              onChange={(e) => setLines((old) => old.map((x) => x.key === line.key ? { ...x, quantity: Number(e.target.value) } : x))}
+              onChange={(e) => setLines((old) => old.map((x) => x.key === line.key ? { ...x, quantity: e.target.value.replace(/\D/g, "") } : x))}
             />
           </FormField>
           <Button type="button" variant="ghost" aria-label="Xóa dòng" onClick={() => setLines((old) => old.length === 1 ? old : old.filter((x) => x.key !== line.key))}>
@@ -72,12 +75,12 @@ export function SupplierReturnForm({
           onClick={() => {
             const next = available.find((p) => !lines.some((x) => x.productId === p.id));
             if (!next) return;
-            setLines((old) => [...old, { key: crypto.randomUUID(), productId: next.id, quantity: 1 }]);
+            setLines((old) => [...old, { key: crypto.randomUUID(), productId: next.id, quantity: "" }]);
           }}
         >
           <Plus size={17} /> Thêm loại vỏ
         </Button>
-        <Button type="submit" className="ml-auto"><RotateCcw size={17}/> Xác nhận trả vỏ</Button>
+        <Button type="submit" disabled={!canSubmit} className="ml-auto"><RotateCcw size={17}/> Xác nhận trả vỏ</Button>
       </div>
     </form>
   );

@@ -9,9 +9,21 @@ import { FormField } from "@/components/ui/form-field";
 
 type Product = { id: string; code: string; name: string; unit: string };
 type Location = { id: string; code: string; name: string };
-type Line = { key: string; productId: string; quantity: number };
+type Line = { key: string; productId: string; quantity: string };
 
 type Zone = "PLANT" | "MINE";
+
+function normalizeDecimalInput(value: string) {
+  const cleaned = value.replace(/,/g, ".").replace(/[^0-9.]/g, "");
+  const firstDot = cleaned.indexOf(".");
+  if (firstDot < 0) return cleaned;
+  return cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, "");
+}
+
+function qtyNumber(value: string) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
 
 export function DeliveryCreateForm({ products, locations, today }: { products: Product[]; locations: Location[]; today: string }) {
   const plant = locations.find((l) => l.code === "PLANT");
@@ -20,12 +32,12 @@ export function DeliveryCreateForm({ products, locations, today }: { products: P
   const [mineLines, setMineLines] = useState<Line[]>([]);
 
   const payload = useMemo(() => [
-    ...plantLines.map(({ productId, quantity }) => ({ productId, destinationLocationId: plant?.id || "", quantity })),
-    ...mineLines.map(({ productId, quantity }) => ({ productId, destinationLocationId: mine?.id || "", quantity })),
+    ...plantLines.map(({ productId, quantity }) => ({ productId, destinationLocationId: plant?.id || "", quantity: qtyNumber(quantity) })),
+    ...mineLines.map(({ productId, quantity }) => ({ productId, destinationLocationId: mine?.id || "", quantity: qtyNumber(quantity) })),
   ], [plantLines, mineLines, plant?.id, mine?.id]);
 
-  const hasPlant = plantLines.some((x) => x.productId && x.quantity > 0);
-  const hasMine = mineLines.some((x) => x.productId && x.quantity > 0);
+  const hasPlant = plantLines.some((x) => x.productId && qtyNumber(x.quantity) > 0);
+  const hasMine = mineLines.some((x) => x.productId && qtyNumber(x.quantity) > 0);
   const tripLabel = hasMine ? (hasPlant ? "Nhà máy + Mỏ Tà Thiết" : "Mỏ Tà Thiết") : hasPlant ? "Nhà máy" : "Chưa có dữ liệu giao";
   const feeLabel = hasMine ? "Chuyến này tính 1 cước Mỏ Tà Thiết" : hasPlant ? "Chuyến này tính 1 cước Nhà máy" : "Thêm ít nhất một loại khí ở Nhà máy hoặc Mỏ";
 
@@ -35,7 +47,7 @@ export function DeliveryCreateForm({ products, locations, today }: { products: P
     const current = linesFor(zone);
     const next = products.find((p) => !current.some((x) => x.productId === p.id));
     if (!next) return;
-    setterFor(zone)((old) => [...old, { key: crypto.randomUUID(), productId: next.id, quantity: 1 }]);
+    setterFor(zone)((old) => [...old, { key: crypto.randomUUID(), productId: next.id, quantity: "" }]);
   }
   function updateLine(zone: Zone, key: string, patch: Partial<Line>) {
     setterFor(zone)((old) => old.map((x) => x.key === key ? { ...x, ...patch } : x));
@@ -61,7 +73,7 @@ export function DeliveryCreateForm({ products, locations, today }: { products: P
             </Select>
           </FormField>
           <FormField label="Số lượng">
-            <Input type="number" min="0.001" step="0.001" value={line.quantity} onChange={(e) => updateLine(zone, line.key, { quantity: Number(e.target.value) })}/>
+            <Input type="text" inputMode="decimal" autoComplete="off" placeholder="Nhập SL" value={line.quantity} onChange={(e) => updateLine(zone, line.key, { quantity: normalizeDecimalInput(e.target.value) })}/>
           </FormField>
           <Button type="button" variant="ghost" aria-label="Xóa dòng" title="Xóa dòng" onClick={() => removeLine(zone, line.key)}><Trash2 size={17}/></Button>
         </div>)}
@@ -97,21 +109,29 @@ export function DeliveryCreateForm({ products, locations, today }: { products: P
 
 type TransferProduct = { id: string; code: string; name: string; unit: string };
 type TransferDirection = "plant_to_mine" | "mine_to_plant";
-type TransferItem = { key: string; productId: string; quantity: number; sourceBucket: "full" | "empty" | "managed" };
+type TransferItem = { key: string; productId: string; quantity: string; sourceBucket: "full" | "empty" | "managed" };
 
 export function TransferQuickForm({ products, direction, today }: { products: TransferProduct[]; direction: TransferDirection; today: string }) {
   const formRef = useRef<HTMLFormElement>(null);
-  const [items, setItems] = useState<TransferItem[]>([{ key: crypto.randomUUID(), productId: products[0]?.id || "", quantity: 1, sourceBucket: direction === "plant_to_mine" ? "full" : "managed" }]);
+  const [items, setItems] = useState<TransferItem[]>([{ key: crypto.randomUUID(), productId: products[0]?.id || "", quantity: "", sourceBucket: direction === "plant_to_mine" ? "full" : "managed" }]);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [removeIndex, setRemoveIndex] = useState<number | null>(null);
   const [note, setNote] = useState("");
-  const payload = useMemo(() => items.map(({ productId, quantity, sourceBucket }) => ({ productId, quantity, sourceBucket })), [items]);
+  const payload = useMemo(() => items.map(({ productId, quantity, sourceBucket }) => ({ productId, quantity: qtyNumber(quantity), sourceBucket })), [items]);
 
   function updateProduct(index: number, productId: string) {
     setItems((old) => old.map((x, i) => i === index ? { ...x, productId } : x));
   }
-  function updateQty(index: number, quantity: number) {
-    setItems((old) => old.map((x, i) => i === index ? { ...x, quantity: Math.max(1, Number.isFinite(quantity) ? Math.floor(quantity) : 1) } : x));
+  function updateQty(index: number, quantity: string) {
+    const digits = quantity.replace(/\D/g, "");
+    setItems((old) => old.map((x, i) => i === index ? { ...x, quantity: digits } : x));
+  }
+  function stepQty(index: number, delta: number) {
+    setItems((old) => old.map((x, i) => {
+      if (i !== index) return x;
+      const current = Math.floor(qtyNumber(x.quantity));
+      return { ...x, quantity: String(Math.max(1, current + delta || 1)) };
+    }));
   }
   function updateBucket(index: number, sourceBucket: "full" | "empty") {
     setItems((old) => old.map((x, i) => i === index ? { ...x, sourceBucket } : x));
@@ -119,7 +139,7 @@ export function TransferQuickForm({ products, direction, today }: { products: Tr
   function addItem() {
     const available = products.find((p) => !items.some((x) => x.productId === p.id));
     if (!available) return;
-    setItems((old) => [...old, { key: crypto.randomUUID(), productId: available.id, quantity: 1, sourceBucket: direction === "plant_to_mine" ? "full" : "managed" }]);
+    setItems((old) => [...old, { key: crypto.randomUUID(), productId: available.id, quantity: "", sourceBucket: direction === "plant_to_mine" ? "full" : "managed" }]);
   }
   function confirmRemove() {
     if (removeIndex == null) return;
@@ -127,7 +147,7 @@ export function TransferQuickForm({ products, direction, today }: { products: Tr
     setRemoveIndex(null);
   }
   function askSubmit() {
-    if (!items.length || items.some((x) => !x.productId || x.quantity <= 0)) return;
+    if (!items.length || items.some((x) => !x.productId || qtyNumber(x.quantity) <= 0)) return;
     setConfirmOpen(true);
   }
   function submit() {
@@ -148,7 +168,7 @@ export function TransferQuickForm({ products, direction, today }: { products: Tr
       <div className="mt-4 overflow-hidden rounded-2xl border border-[var(--border)] bg-white">
         {items.map((item, index) => <div key={item.key} className="grid gap-3 border-b border-[var(--border)] p-3 last:border-b-0 md:grid-cols-[1.4fr_.8fr_.8fr_auto] md:items-end">
           <label className="grid gap-1 text-xs font-bold text-[var(--muted-foreground)]">Loại khí<select value={item.productId} onChange={(e) => updateProduct(index, e.target.value)} className="min-h-11 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold text-[var(--ink)]">{products.filter((p) => p.id === item.productId || !items.some((x, i) => i !== index && x.productId === p.id)).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
-          <div><div className="text-xs font-bold text-[var(--muted-foreground)]">Số lượng</div><div className="mt-1 grid grid-cols-[38px_1fr_38px] overflow-hidden rounded-xl border border-[var(--border)]"><button type="button" onClick={() => updateQty(index, item.quantity - 1)} className="grid min-h-11 place-items-center hover:bg-[var(--muted)]"><Minus size={16}/></button><input value={item.quantity} onChange={(e) => updateQty(index, Number(e.target.value))} inputMode="numeric" type="number" min="1" className="min-w-0 border-x border-[var(--border)] text-center font-mono-data font-extrabold outline-none"/><button type="button" onClick={() => updateQty(index, item.quantity + 1)} className="grid min-h-11 place-items-center hover:bg-[var(--muted)]"><Plus size={16}/></button></div></div>
+          <div><div className="text-xs font-bold text-[var(--muted-foreground)]">Số lượng</div><div className="mt-1 grid grid-cols-[38px_1fr_38px] overflow-hidden rounded-xl border border-[var(--border)]"><button type="button" onClick={() => stepQty(index, -1)} className="grid min-h-11 place-items-center hover:bg-[var(--muted)]"><Minus size={16}/></button><input value={item.quantity} onChange={(e) => updateQty(index, e.target.value)} inputMode="numeric" pattern="[0-9]*" type="text" autoComplete="off" placeholder="SL" className="min-w-0 border-x border-[var(--border)] text-center font-mono-data font-extrabold outline-none"/><button type="button" onClick={() => stepQty(index, 1)} className="grid min-h-11 place-items-center hover:bg-[var(--muted)]"><Plus size={16}/></button></div></div>
           {direction === "plant_to_mine" ? <label className="grid gap-1 text-xs font-bold text-[var(--muted-foreground)]">Loại chai<select value={item.sourceBucket} onChange={(e) => updateBucket(index, e.target.value as "full"|"empty")} className="min-h-11 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold text-[var(--ink)]"><option value="full">Chai đầy</option><option value="empty">Chai rỗng</option></select></label> : <div className="rounded-xl bg-[var(--paper)] px-3 py-2 text-sm"><div className="text-[11px] font-bold text-[var(--muted-foreground)]">Nơi nhận</div><div className="font-bold">Kho · Vỏ rỗng</div></div>}
           <button type="button" onClick={() => setRemoveIndex(index)} disabled={items.length <= 1} className="rounded-xl p-2.5 text-[var(--danger)] hover:bg-red-50 disabled:opacity-30" aria-label="Xóa dòng"><Trash2 size={18}/></button>
         </div>)}
@@ -159,7 +179,7 @@ export function TransferQuickForm({ products, direction, today }: { products: Tr
       <button type="button" onClick={askSubmit} className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[var(--brand)] px-4 font-extrabold text-white hover:bg-[var(--brand-hover)]"><Send size={18}/>{direction === "plant_to_mine" ? "Tạo điều chuyển" : "Gửi điều chuyển về Nhà máy"}</button>
     </form>
 
-    {confirmOpen ? <div className="fixed inset-0 z-[95] grid place-items-center bg-slate-950/40 p-4"><div className="w-full max-w-sm rounded-2xl border border-[var(--border)] bg-white p-5 shadow-2xl"><div className="mx-auto grid h-11 w-11 place-items-center rounded-full bg-blue-50 text-[var(--brand)]"><AlertTriangle size={21}/></div><h3 className="mt-3 text-center text-lg font-extrabold">Xác nhận điều chuyển?</h3><p className="mt-1 text-center text-sm text-[var(--muted-foreground)]">Tồn nơi gửi sẽ giảm và nơi nhận sẽ tăng ngay sau khi xác nhận.</p><div className="mt-4 rounded-xl bg-[var(--paper)] p-3 text-sm">{items.map((item) => { const p = products.find((x) => x.id === item.productId); return p ? <div key={item.key} className="flex justify-between gap-3 py-1"><span>{p.name}</span><strong className="font-mono-data">{item.quantity} {p.unit}</strong></div> : null; })}</div><div className="mt-5 grid grid-cols-2 gap-2"><button type="button" onClick={() => setConfirmOpen(false)} className="min-h-11 rounded-xl border border-[var(--border)] font-bold">Hủy</button><button type="button" onClick={submit} className="min-h-11 rounded-xl bg-[var(--brand)] font-bold text-white">Xác nhận</button></div></div></div> : null}
+    {confirmOpen ? <div className="fixed inset-0 z-[95] grid place-items-center bg-slate-950/40 p-4"><div className="w-full max-w-sm rounded-2xl border border-[var(--border)] bg-white p-5 shadow-2xl"><div className="mx-auto grid h-11 w-11 place-items-center rounded-full bg-blue-50 text-[var(--brand)]"><AlertTriangle size={21}/></div><h3 className="mt-3 text-center text-lg font-extrabold">Xác nhận điều chuyển?</h3><p className="mt-1 text-center text-sm text-[var(--muted-foreground)]">Tồn nơi gửi sẽ giảm và nơi nhận sẽ tăng ngay sau khi xác nhận.</p><div className="mt-4 rounded-xl bg-[var(--paper)] p-3 text-sm">{items.map((item) => { const p = products.find((x) => x.id === item.productId); return p ? <div key={item.key} className="flex justify-between gap-3 py-1"><span>{p.name}</span><strong className="font-mono-data">{qtyNumber(item.quantity)} {p.unit}</strong></div> : null; })}</div><div className="mt-5 grid grid-cols-2 gap-2"><button type="button" onClick={() => setConfirmOpen(false)} className="min-h-11 rounded-xl border border-[var(--border)] font-bold">Hủy</button><button type="button" onClick={submit} className="min-h-11 rounded-xl bg-[var(--brand)] font-bold text-white">Xác nhận</button></div></div></div> : null}
     {removeIndex != null ? <div className="fixed inset-0 z-[96] grid place-items-center bg-slate-950/40 p-4"><div className="w-full max-w-sm rounded-2xl border border-[var(--border)] bg-white p-5 shadow-2xl"><div className="flex gap-3"><div className="grid h-10 w-10 place-items-center rounded-full bg-red-50 text-[var(--danger)]"><Trash2 size={19}/></div><div><h3 className="m-0 text-base font-extrabold">Xóa loại khí khỏi lệnh?</h3><p className="mt-1 text-sm text-[var(--muted-foreground)]">Dòng đang chọn sẽ được bỏ khỏi điều chuyển.</p></div></div><div className="mt-5 grid grid-cols-2 gap-2"><button type="button" onClick={() => setRemoveIndex(null)} className="min-h-11 rounded-xl border border-[var(--border)] font-bold">Hủy</button><button type="button" onClick={confirmRemove} className="min-h-11 rounded-xl bg-[var(--danger)] font-bold text-white">Xóa dòng</button></div></div></div> : null}
   </>;
 }

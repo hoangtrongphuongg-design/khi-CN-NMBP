@@ -398,3 +398,15 @@ Có cơ cấu chi phí, xu hướng, top loại khí, bảng tổng hợp theo l
 - Nội dung dài được phép xuống dòng; container/card/nút giữ nguyên vị trí nhưng tự tăng chiều cao khi cần.
 - Không thu nhỏ font để ép vừa. Số liệu/mã ngắn vẫn giữ cách trình bày tabular hiện tại.
 - Sửa theo CSS mobile toàn cục để các bản sau không tái phát tình trạng `truncate`, `line-clamp` hoặc `text-overflow: ellipsis` trên màn hình điện thoại.
+
+
+## Chuẩn nhập số lượng toàn hệ thống (V1.0.31)
+
+- Không mặc định `1` hoặc `0` trong các ô số lượng khi tạo dòng nghiệp vụ mới; ô bắt đầu ở trạng thái trống và dùng placeholder `Nhập SL`/`SL`.
+- Cho phép nhập liên tục số có 1, 2, 3... chữ số; không có logic auto-tab/auto-focus sang trường kế tiếp sau một chữ số.
+- Người dùng có thể xóa sạch giá trị đang nhập. Trạng thái trống được phép trong lúc nhập; chỉ kiểm tra `> 0` khi gửi/xác nhận nghiệp vụ.
+- Các ô số lượng chai/vỏ dùng `inputMode="numeric"` + `pattern="[0-9]*"` để ưu tiên bàn phím số trên điện thoại. Các ô có thể cần số thập phân (ví dụ lượng giao theo kg/bồn) dùng `inputMode="decimal"`.
+- Các form client-side giữ giá trị đang gõ ở dạng chuỗi để tránh trường hợp xóa hết bị ép lại thành `0`/`1`; chỉ chuyển sang số khi validate hoặc tạo payload gửi backend.
+- Nút `+/-` vẫn giữ nguyên bố cục đã khóa; nếu ô đang trống và người dùng bấm `+`, giá trị bắt đầu từ 1.
+- Áp dụng cho các luồng tạo Phiếu giao NCC, trả vỏ cùng chuyến, Đổi/Mượn/Trả của nhóm và Điều chuyển Nhà máy ↔ Mỏ. Component Input chung cũng tự ưu tiên bàn phím số/decimal cho các trường `type=number` còn lại.
+- Không thay đổi layout mobile/desktop, quyền, nghiệp vụ, database hoặc các giao diện đã khóa chốt.

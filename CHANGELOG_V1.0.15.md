@@ -18,3 +18,10 @@
 - Chỉ sửa lỗi chữ bị cắt/hiển thị `...` trên mobile.
 - Cho phép tên/label dài tự xuống dòng và container tự tăng chiều cao.
 - Không thay đổi desktop, nghiệp vụ, quyền hoặc database.
+
+
+## V1.0.31 — Numeric input UX fix
+- Bỏ mặc định số lượng `1` ở các form nghiệp vụ client-side; ô mới để trống.
+- Cho phép xóa sạch ô số lượng và nhập số nhiều chữ số bình thường, không auto-tab.
+- Mobile ưu tiên bàn phím số (`numeric`) hoặc bàn phím số thập phân (`decimal`) theo loại dữ liệu.
+- Giữ nguyên toàn bộ layout/role/business flow đã khóa; không có SQL mới.
