@@ -11,3 +11,10 @@
 - Excel `Nội bộ` xuất từng dòng khí của một phiếu.
 - Thêm migration `NEON_SQL/08_PHIEU_NOI_BO_NHIEU_LOAI_KHI.sql`.
 - Giữ toàn bộ thay đổi V1.0.14: báo cáo Từ ngày–Đến ngày, mua khí, thuê vỏ theo ngày, XL-45, vận chuyển, điều chuyển một bước, tồn khí dashboard.
+
+
+## V1.0.30 — Mobile text visibility hotfix
+- Khóa baseline UI mobile/desktop của tất cả vai trò.
+- Chỉ sửa lỗi chữ bị cắt/hiển thị `...` trên mobile.
+- Cho phép tên/label dài tự xuống dòng và container tự tăng chiều cao.
+- Không thay đổi desktop, nghiệp vụ, quyền hoặc database.

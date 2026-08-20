@@ -311,7 +311,7 @@ Có cơ cấu chi phí, xu hướng, top loại khí, bảng tổng hợp theo l
 
 ### Trang Tổng quan
 - Không lặp bảng tồn Kho Hậu cần.
-- Workshop / Trưởng kho / NCC / Ban quản đốc được xem 2 KPI tài chính: `Chi phí tháng này đến hôm nay` và `Lũy kế năm đến hôm nay`.
+- Workshop / Trưởng kho / NCC / Ban quản đốc được xem 2 KPI tài chính: `Chi phí tháng này đến hôm nay` và `Lũy kế năm đến hôm nay`. Đốc công/Giám sát chỉ được xem số lượng vỏ/bồn NCC theo V1.0.29, không được xem chi phí.
 - Hai KPI tài chính gồm: mua khí + thuê vỏ + XL-45 + vận chuyển. Chi tiết vẫn thuộc trang Báo cáo.
 - Chỉ 4 vai trò trên được mở Báo cáo chi phí; khóa đồng thời menu, page và API.
 - Bảng `Vỏ đang thuê NCC` hiển thị riêng từng loại khí theo công thức số dư đầu kỳ + NCC giao - trả NCC.
@@ -388,3 +388,13 @@ Có cơ cấu chi phí, xu hướng, top loại khí, bảng tổng hợp theo l
 - Cuối trang có hoạt động gần đây của chính nhóm.
 - Đốc công/Giám sát không được xem chi phí/Báo cáo tài chính.
 
+
+
+## Khóa baseline giao diện + sửa hiển thị chữ mobile (V1.0.30)
+
+- Giao diện mobile và desktop của toàn bộ vai trò đã được người dùng kiểm tra và chốt. Không tự thay đổi bố cục, vị trí, chức năng hay luồng nghiệp vụ nếu không có yêu cầu trực tiếp, cụ thể.
+- V1.0.30 chỉ sửa lỗi nội dung chữ bị cắt trên điện thoại; không thay đổi nghiệp vụ, quyền, API dữ liệu, cấu trúc trang hay desktop.
+- Trên mobile không dùng ellipsis/`...` cho tên loại khí, tên sản phẩm, tên chức năng, tiêu đề, mô tả, tài khoản/role và nhãn trạng thái.
+- Nội dung dài được phép xuống dòng; container/card/nút giữ nguyên vị trí nhưng tự tăng chiều cao khi cần.
+- Không thu nhỏ font để ép vừa. Số liệu/mã ngắn vẫn giữ cách trình bày tabular hiện tại.
+- Sửa theo CSS mobile toàn cục để các bản sau không tái phát tình trạng `truncate`, `line-clamp` hoặc `text-overflow: ellipsis` trên màn hình điện thoại.
