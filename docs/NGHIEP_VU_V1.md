@@ -347,3 +347,13 @@ Có cơ cấu chi phí, xu hướng, top loại khí, bảng tổng hợp theo l
 - Chỉ `storekeeper` được tạo trả vỏ tại Nhà máy; chỉ `mine_xsc` được tạo trả vỏ tại Mỏ. Backend tự suy ra địa điểm từ vai trò, không nhận dropdown địa điểm từ user.
 - Nút trả vỏ chỉ xuất hiện nếu Phiếu giao thực sự có dòng giao tại đúng địa điểm của user.
 - NCC không xác nhận lại Phiếu trả; chỉ xem và phản hồi nếu sai lệch.
+
+## Giao diện tồn Kho Hậu cần dạng bảng điều hành (V1.0.28)
+
+- Desktop bỏ lưới card lớn cho từng loại khí; chuyển sang bảng một dòng/một sản phẩm với các cột: Loại khí / sản phẩm, Đầy, Rỗng, Tổng vỏ, Trạng thái.
+- Thứ tự ưu tiên cố định: O₂ → CO₂ → N₂ → Ar/CO₂ → LPG 12 kg → LPG 45 kg → Argon → các loại khác.
+- Loại có tổng số liệu bằng 0 và không có cảnh báo sẽ tự ẩn.
+- Trạng thái tồn thấp dựa trên số chai đầy so với ngưỡng cấu hình; nếu chưa có ngưỡng hiển thị trạng thái trung tính "Chưa đặt ngưỡng".
+- Cảnh báo tồn thấp nằm ngay trên dòng tương ứng, không tạo tab cảnh báo riêng.
+- Header Kho hiển thị tổng nhanh: Tổng vỏ, Đầy, Rỗng.
+- Mobile dùng card compact một dòng sản phẩm với 3 chỉ số Đầy / Rỗng / Tổng vỏ, giữ cùng thứ tự và logic trạng thái với desktop; không có bảng kéo ngang.
