@@ -184,6 +184,115 @@ export async function reviewInternalRequest(profile: Profile, requestId: string,
   await audit({ actorUserId: profile.id, action: action === "approve" ? "review_approve" : "review_feedback", entityType: "internal_request", entityId: requestId, note: feedback });
 }
 
+
+export async function reviseInternalRequestAfterFeedback(profile: Profile, requestId: string, inputs: InternalExecuteItemInput[]) {
+  if (profile.role !== "storekeeper") throw new Error("Chỉ Thủ kho được chỉnh số thực tế sau phản hồi hậu kiểm");
+  const affectedProducts = new Set<string>();
+
+  await sql.begin(async (tx) => {
+    const [req] = await tx`SELECT * FROM internal_requests WHERE id=${requestId}::uuid FOR UPDATE`;
+    if (!req) throw new Error("Không tìm thấy phiếu");
+    if (req.status !== "feedback") throw new Error("Chỉ chỉnh được phiếu đang có phản hồi");
+
+    const items = await tx`
+      SELECT iri.id,iri.product_id,iri.requested_qty::float8 AS requested_qty,
+        iri.actual_qty::float8 AS actual_qty,iri.return_bucket,p.name AS product_name
+      FROM internal_request_items iri
+      JOIN products p ON p.id=iri.product_id
+      WHERE iri.internal_request_id=${requestId}::uuid
+      ORDER BY iri.created_at,iri.id
+      FOR UPDATE OF iri
+    `;
+    if (!items.length) throw new Error("Phiếu chưa có dòng chi tiết để chỉnh");
+
+    const inputMap = new Map(inputs.map((x) => [String(x.itemId), x]));
+    if ((items as any[]).some((item: any) => !inputMap.has(String(item.id)))) {
+      throw new Error("Cần nhập lại số lượng thực tế cho toàn bộ các dòng");
+    }
+
+    const wh = await getStockPointByCode("WH-PHC", tx);
+    const gp = await getGroupStockPoint(req.group_id, tx);
+    const beforeItems = (items as any[]).map((item: any) => ({
+      itemId: String(item.id),
+      productId: String(item.product_id),
+      actualQty: Number(item.actual_qty || 0),
+      returnBucket: item.return_bucket || null,
+    }));
+    const afterItems: Array<{ itemId: string; productId: string; actualQty: number; returnBucket: "full" | "empty" | null }> = [];
+    let totalActual = 0;
+
+    for (const item of items as any[]) {
+      const input = inputMap.get(String(item.id))!;
+      const oldQty = Number(item.actual_qty || 0);
+      const newQty = Math.max(0, Math.floor(Number(input.actualQty)));
+      if (!Number.isFinite(newQty)) throw new Error(`${item.product_name}: số lượng thực tế không hợp lệ`);
+      const productId = String(item.product_id);
+      const diff = newQty - oldQty;
+      affectedProducts.add(productId);
+
+      if (req.request_type === "exchange") {
+        if (diff !== 0) {
+          await applyStockDelta({ tx, stockPointId: wh.id, productId, bucket: "full", delta: -diff, referenceType: "internal_exchange_revision", referenceId: req.id, actorUserId: profile.id, note: "Điều chỉnh số thực tế sau phản hồi" });
+          await applyStockDelta({ tx, stockPointId: wh.id, productId, bucket: "empty", delta: diff, referenceType: "internal_exchange_revision", referenceId: req.id, actorUserId: profile.id, note: "Điều chỉnh số thực tế sau phản hồi" });
+        }
+      } else if (req.request_type === "borrow") {
+        if (diff !== 0) {
+          await applyStockDelta({ tx, stockPointId: wh.id, productId, bucket: "full", delta: -diff, referenceType: "internal_borrow_revision", referenceId: req.id, actorUserId: profile.id, note: "Điều chỉnh số thực tế sau phản hồi" });
+          await applyStockDelta({ tx, stockPointId: gp.id, productId, bucket: "managed", delta: diff, referenceType: "internal_borrow_revision", referenceId: req.id, actorUserId: profile.id, note: "Điều chỉnh số thực tế sau phản hồi" });
+        }
+      } else {
+        const oldBucket = item.return_bucket === "full" ? "full" : "empty";
+        const newBucket = input.returnBucket === "full" ? "full" : "empty";
+        if (oldBucket === newBucket) {
+          if (diff !== 0) {
+            await applyStockDelta({ tx, stockPointId: gp.id, productId, bucket: "managed", delta: -diff, referenceType: "internal_return_revision", referenceId: req.id, actorUserId: profile.id, note: "Điều chỉnh số thực tế sau phản hồi" });
+            await applyStockDelta({ tx, stockPointId: wh.id, productId, bucket: newBucket, delta: diff, referenceType: "internal_return_revision", referenceId: req.id, actorUserId: profile.id, note: "Điều chỉnh số thực tế sau phản hồi" });
+          }
+        } else {
+          const groupDiff = oldQty - newQty;
+          if (groupDiff !== 0) {
+            await applyStockDelta({ tx, stockPointId: gp.id, productId, bucket: "managed", delta: groupDiff, referenceType: "internal_return_revision", referenceId: req.id, actorUserId: profile.id, note: "Điều chỉnh số thực tế sau phản hồi" });
+          }
+          if (oldQty > 0) {
+            await applyStockDelta({ tx, stockPointId: wh.id, productId, bucket: oldBucket, delta: -oldQty, referenceType: "internal_return_revision", referenceId: req.id, actorUserId: profile.id, note: "Đổi tình trạng chai sau phản hồi" });
+          }
+          if (newQty > 0) {
+            await applyStockDelta({ tx, stockPointId: wh.id, productId, bucket: newBucket, delta: newQty, referenceType: "internal_return_revision", referenceId: req.id, actorUserId: profile.id, note: "Đổi tình trạng chai sau phản hồi" });
+          }
+        }
+      }
+
+      const nextBucket = req.request_type === "return" ? (input.returnBucket === "full" ? "full" : "empty") : null;
+      await tx`
+        UPDATE internal_request_items
+        SET actual_qty=${newQty},return_bucket=${nextBucket},line_status='executed',executed_at=now()
+        WHERE id=${item.id}::uuid
+      `;
+      totalActual += newQty;
+      afterItems.push({ itemId: String(item.id), productId, actualQty: newQty, returnBucket: nextBucket });
+    }
+
+    await tx`
+      UPDATE internal_requests
+      SET actual_qty=${totalActual},status='executed_pending_review',feedback=NULL,
+          executed_by=${profile.id}::uuid,executed_at=now(),reviewed_by=NULL,reviewed_at=NULL
+      WHERE id=${requestId}::uuid
+    `;
+    await audit({
+      tx,
+      actorUserId: profile.id,
+      action: "revise_after_feedback",
+      entityType: "internal_request",
+      entityId: requestId,
+      before: { items: beforeItems, feedback: req.feedback },
+      after: { items: afterItems, status: "executed_pending_review" },
+      note: "Thủ kho chỉnh số thực tế theo phản hồi và gửi lại hậu kiểm.",
+    });
+  });
+
+  for (const productId of affectedProducts) await checkLowStock(productId);
+}
+
 export async function listInternalRequests(profile: Profile) {
   const base = `
     SELECT ir.id,ir.request_code,ir.request_type,ir.requested_qty::float8 AS requested_qty,ir.actual_qty::float8 AS actual_qty,

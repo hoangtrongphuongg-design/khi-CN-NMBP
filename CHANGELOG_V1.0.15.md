@@ -49,3 +49,13 @@
 - Trưởng kho có tác vụ riêng cho duyệt nhận hàng và hậu kiểm trả vỏ Nhà máy/Mỏ.
 - Phản hồi hậu kiểm không tự đảo tồn kho.
 - SQL 14 bổ sung trường hậu kiểm trên supplier_returns.
+
+## V1.0.36 — Phản hồi mở lại quyền chỉnh sửa
+- Baseline: V1.0.35. Không thay đổi database, không có SQL mới.
+- Chuẩn chung: khi bên nhận/hậu kiểm phản hồi, đúng bên đã nhập/xác nhận dữ liệu được mở lại quyền chỉnh sửa và gửi lại.
+- Phiếu giao NCC: phản hồi trước XSC → NCC sửa SL khai báo; phản hồi sau XSC → Workshop (Nhà máy) / XSC Mỏ sửa SL thực nhận rồi gửi lại Trưởng kho.
+- Phiếu trả vỏ NCC: Thủ kho (Nhà máy) / XSC Mỏ được sửa số lượng, thêm/xóa loại sau phản hồi; hệ thống chỉ cập nhật phần chênh lệch tồn và đưa phiếu về Chờ Trưởng kho duyệt.
+- Phiếu Đổi/Mượn/Trả nội bộ: khi hậu kiểm phản hồi, Thủ kho sửa SL thực tế/tình trạng trả và gửi lại; tồn chỉ điều chỉnh phần chênh lệch.
+- Điều chuyển Nhà máy ↔ Mỏ: bên lập điều chuyển được sửa sau phản hồi của bên nhận; tồn chỉ điều chỉnh phần chênh lệch rồi phiếu trở lại trạng thái đã cập nhật.
+- Các điều chỉnh sau phản hồi đều ghi audit; dữ liệu đã cập nhật tồn trước đó không bị chạy lại toàn bộ.
+- Báo cáo thuê vỏ và Tổng quan vỏ NCC đã tính cả bút toán điều chỉnh trả vỏ để số hiện tại/chi phí không lệch.

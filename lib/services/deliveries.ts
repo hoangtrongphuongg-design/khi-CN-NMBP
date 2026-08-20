@@ -98,13 +98,14 @@ export async function resubmitDeliveryItem(profile: Profile, itemId: string, dec
   if (!(declaredQty > 0)) throw new Error("Số lượng phải lớn hơn 0");
   await sql.begin(async (tx) => {
     const [item] = await tx`
-      SELECT di.id,di.delivery_id,di.status,di.declared_qty,d.supplier_org_id
+      SELECT di.id,di.delivery_id,di.status,di.declared_qty,di.confirmed_by,d.supplier_org_id
       FROM supplier_delivery_items di
       JOIN supplier_deliveries d ON d.id=di.delivery_id
       WHERE di.id=${itemId}::uuid FOR UPDATE
     `;
     if (!item || item.supplier_org_id !== profile.organization_id) throw new Error("Dòng giao không thuộc NCC này");
     if (item.status !== "feedback") throw new Error("Chỉ cập nhật dòng đang có phản hồi");
+    if (item.confirmed_by) throw new Error("Phản hồi này dành cho XSC chỉnh số thực nhận, NCC không được sửa số khai báo");
     const before = { declared_qty: Number(item.declared_qty), status: item.status };
     await tx`
       UPDATE supplier_delivery_items
@@ -148,9 +149,9 @@ export async function confirmDeliveryItem(profile: Profile, itemId: string, actu
       const wasXscConfirmed = item.status === "xsc_confirmed";
       await tx`
         UPDATE supplier_delivery_items
-        SET status='feedback',confirmed_qty=${actualQty},feedback=${feedback || "Số liệu chưa thống nhất"},
-            confirmed_by=${wasXscConfirmed ? item.confirmed_by : profile.id}::uuid,
-            confirmed_at=${wasXscConfirmed ? item.confirmed_at : new Date()}::timestamptz
+        SET status='feedback',confirmed_qty=${wasXscConfirmed ? actualQty : null},feedback=${feedback || "Số liệu chưa thống nhất"},
+            confirmed_by=${wasXscConfirmed ? item.confirmed_by : null}::uuid,
+            confirmed_at=${wasXscConfirmed ? item.confirmed_at : null}::timestamptz
         WHERE id=${itemId}::uuid
       `;
       await tx`UPDATE supplier_deliveries SET status='feedback',phc_confirmed_by=NULL,phc_confirmed_at=NULL WHERE id=${item.delivery_id}::uuid`;
@@ -180,6 +181,64 @@ export async function confirmDeliveryItem(profile: Profile, itemId: string, actu
     await tx`UPDATE supplier_deliveries SET status=${nextStatus},phc_confirmed_by=NULL,phc_confirmed_at=NULL WHERE id=${item.delivery_id}::uuid`;
     await tx`UPDATE transport_trips SET status='open' WHERE id=(SELECT trip_id FROM supplier_deliveries WHERE id=${item.delivery_id}::uuid)`;
     await audit({ tx, actorUserId: profile.id, action: "xsc_confirm", entityType: "supplier_delivery_item", entityId: itemId, after: { actualQty, nextStatus } });
+  });
+}
+
+
+export async function reviseConfirmedDeliveryItem(profile: Profile, itemId: string, actualQty: number) {
+  if (!(actualQty >= 0) || !Number.isFinite(actualQty)) throw new Error("Số lượng thực nhận không hợp lệ");
+  await sql.begin(async (tx) => {
+    const [item] = await tx`
+      SELECT di.id,di.delivery_id,di.status,di.confirmed_by,di.confirmed_qty,di.feedback,
+        l.code AS location_code,d.status AS delivery_status
+      FROM supplier_delivery_items di
+      JOIN supplier_deliveries d ON d.id=di.delivery_id
+      JOIN locations l ON l.id=di.destination_location_id
+      WHERE di.id=${itemId}::uuid
+      FOR UPDATE OF di
+    `;
+    if (!item) throw new Error("Không tìm thấy dòng giao");
+    if (item.status !== "feedback" || !item.confirmed_by) throw new Error("Dòng này không phải phản hồi sau xác nhận XSC");
+    if (item.location_code === "PLANT" && !canConfirmPlantDelivery(profile)) throw new Error("Chỉ Workshop được chỉnh phần giao Nhà máy");
+    if (item.location_code === "MINE" && !canConfirmMineDelivery(profile)) throw new Error("Chỉ XSC Mỏ được chỉnh phần giao Mỏ");
+
+    const before = { confirmed_qty: Number(item.confirmed_qty || 0), feedback: item.feedback, status: item.status };
+    await tx`
+      UPDATE supplier_delivery_items
+      SET confirmed_qty=${actualQty},status='xsc_confirmed',feedback=NULL,confirmed_by=${profile.id}::uuid,confirmed_at=now()
+      WHERE id=${itemId}::uuid
+    `;
+    const [counts] = await tx`
+      SELECT
+        count(*) FILTER (WHERE status='feedback')::int AS feedback_count,
+        count(*) FILTER (WHERE status='pending')::int AS pending_count,
+        count(*) FILTER (WHERE status='xsc_confirmed')::int AS xsc_count,
+        count(*)::int AS total_count
+      FROM supplier_delivery_items
+      WHERE delivery_id=${item.delivery_id}::uuid
+    `;
+    const nextStatus = Number(counts.feedback_count) > 0
+      ? "feedback"
+      : Number(counts.pending_count) > 0
+        ? "pending"
+        : Number(counts.xsc_count) === Number(counts.total_count)
+          ? "phc_pending"
+          : "pending";
+    await tx`
+      UPDATE supplier_deliveries
+      SET status=${nextStatus},phc_confirmed_by=NULL,phc_confirmed_at=NULL
+      WHERE id=${item.delivery_id}::uuid
+    `;
+    await audit({
+      tx,
+      actorUserId: profile.id,
+      action: "xsc_revise_after_feedback",
+      entityType: "supplier_delivery_item",
+      entityId: itemId,
+      before,
+      after: { confirmed_qty: actualQty, status: "xsc_confirmed", delivery_status: nextStatus },
+      note: "XSC chỉnh số thực nhận theo phản hồi của Trưởng kho và gửi lại duyệt.",
+    });
   });
 }
 

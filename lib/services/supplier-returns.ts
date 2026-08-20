@@ -40,6 +40,98 @@ async function allocateXL45Return(tx: any, supplierReturnItemId: string, product
   if (remaining > 0.000001) throw new Error("Số bồn XL-45 trả vượt số bồn đang lưu theo lịch sử giao nhận");
 }
 
+
+async function restoreXL45Allocations(tx: any, supplierReturnItemId: string) {
+  const allocations = await tx`
+    SELECT id,xl45_lot_id,quantity::float8 AS quantity
+    FROM xl45_return_allocations
+    WHERE supplier_return_item_id=${supplierReturnItemId}::uuid
+    ORDER BY id
+    FOR UPDATE
+  `;
+  for (const allocation of allocations as any[]) {
+    await tx`
+      UPDATE xl45_lots
+      SET qty_outstanding=qty_outstanding+${Number(allocation.quantity)}
+      WHERE id=${allocation.xl45_lot_id}::uuid
+    `;
+  }
+  await tx`DELETE FROM xl45_return_allocations WHERE supplier_return_item_id=${supplierReturnItemId}::uuid`;
+}
+
+async function applySupplierReturnDifference(params: {
+  tx: any;
+  returnId: string;
+  product: any;
+  locationCode: string;
+  stockPointId: string;
+  diff: number;
+  actorUserId: string;
+  occurredDate: string;
+}) {
+  const { tx, returnId, product, locationCode, stockPointId, diff, actorUserId, occurredDate } = params;
+  if (Math.abs(diff) < 0.000001) return;
+
+  if (locationCode === "MINE") {
+    await applyStockDelta({
+      tx, stockPointId, productId: product.id, bucket: "managed", delta: -diff,
+      referenceType: "supplier_return_revision", referenceId: returnId, actorUserId, occurredDate,
+      note: "Điều chỉnh trả vỏ sau phản hồi",
+    });
+    return;
+  }
+
+  if (!product.warehouse_split_full_empty) {
+    await applyStockDelta({
+      tx, stockPointId, productId: product.id, bucket: "available", delta: -diff,
+      referenceType: "supplier_return_revision", referenceId: returnId, actorUserId, occurredDate,
+      note: "Điều chỉnh trả vỏ sau phản hồi",
+    });
+    return;
+  }
+
+  if (diff < 0) {
+    // Giảm số đã trả => hoàn lại vỏ về Kho. Tồn đầu kỳ đã được chốt là vỏ rỗng,
+    // vì vậy phần hoàn lại được đưa về bucket empty.
+    await applyStockDelta({
+      tx, stockPointId, productId: product.id, bucket: "empty", delta: -diff,
+      referenceType: "supplier_return_revision", referenceId: returnId, actorUserId, occurredDate,
+      note: "Hoàn lại vỏ rỗng do giảm số trả sau phản hồi",
+    });
+    return;
+  }
+
+  const balanceRows = await tx`
+    SELECT bucket,qty::float8 AS qty
+    FROM stock_balances
+    WHERE stock_point_id=${stockPointId}::uuid
+      AND product_id=${product.id}::uuid
+      AND bucket IN ('empty','unclassified')
+    FOR UPDATE
+  `;
+  const emptyQty = Number((balanceRows as any[]).find((x:any)=>x.bucket==='empty')?.qty || 0);
+  const unclassifiedQty = Number((balanceRows as any[]).find((x:any)=>x.bucket==='unclassified')?.qty || 0);
+  if (diff > emptyQty + unclassifiedQty + 0.000001) {
+    throw new Error(`${product.name}: phần trả bổ sung ${diff} lớn hơn số vỏ đang có tại Kho (${emptyQty + unclassifiedQty})`);
+  }
+  const fromEmpty = Math.min(diff, emptyQty);
+  const fromUnclassified = diff - fromEmpty;
+  if (fromEmpty > 0) {
+    await applyStockDelta({
+      tx, stockPointId, productId: product.id, bucket: "empty", delta: -fromEmpty,
+      referenceType: "supplier_return_revision", referenceId: returnId, actorUserId, occurredDate,
+      note: "Bổ sung số vỏ rỗng trả NCC sau phản hồi",
+    });
+  }
+  if (fromUnclassified > 0) {
+    await applyStockDelta({
+      tx, stockPointId, productId: product.id, bucket: "unclassified", delta: -fromUnclassified,
+      referenceType: "supplier_return_revision", referenceId: returnId, actorUserId, occurredDate,
+      note: "Bổ sung số trả từ tồn đầu kỳ sau phản hồi",
+    });
+  }
+}
+
 /**
  * Trả vỏ NCC chỉ được tạo từ một Phiếu giao đã có.
  * Phiếu trả dùng lại trip_id, ngày, NCC và địa điểm của Phiếu giao; không tạo chuyến/cước mới.
@@ -225,6 +317,128 @@ export async function createSupplierReturn(profile: Profile, input: {
   });
 }
 
+
+export async function reviseSupplierReturn(profile: Profile, returnId: string, inputLines: { productId: string; quantity: number }[]) {
+  if (!["storekeeper", "mine_xsc"].includes(profile.role)) throw new Error("Chỉ Thủ kho hoặc XSC Mỏ được chỉnh Phiếu trả vỏ sau phản hồi");
+  const lines = inputLines
+    .map((x) => ({ productId: String(x.productId || ""), quantity: Number(x.quantity || 0) }))
+    .filter((x) => x.productId && x.quantity > 0);
+  if (!lines.length) throw new Error("Phiếu trả phải còn ít nhất một loại vỏ");
+  if (new Set(lines.map((x) => x.productId)).size !== lines.length) throw new Error("Mỗi loại vỏ chỉ nhập một dòng");
+
+  await sql.begin(async (tx) => {
+    const [ret] = await tx`
+      SELECT r.*,l.code AS location_code,l.name AS location_name
+      FROM supplier_returns r
+      JOIN locations l ON l.id=r.source_location_id
+      WHERE r.id=${returnId}::uuid
+      FOR UPDATE OF r
+    `;
+    if (!ret) throw new Error("Không tìm thấy Phiếu trả vỏ");
+    if (ret.status === "cancelled") throw new Error("Phiếu trả vỏ đã hủy");
+    const allowedLocationCode = profile.role === "mine_xsc" ? "MINE" : "PLANT";
+    if (ret.location_code !== allowedLocationCode) throw new Error("Bạn chỉ được chỉnh Phiếu trả vỏ tại đúng khu vực của mình");
+
+    const oldItems = await tx`
+      SELECT ri.id,ri.product_id,ri.declared_qty::float8 AS declared_qty,ri.confirmed_qty::float8 AS confirmed_qty,
+        ri.status,ri.feedback,p.code,p.name,p.warehouse_split_full_empty,p.returnable_container
+      FROM supplier_return_items ri
+      JOIN products p ON p.id=ri.product_id
+      WHERE ri.supplier_return_id=${returnId}::uuid
+      ORDER BY p.display_order,p.name
+      FOR UPDATE OF ri
+    `;
+    const hasItemFeedback = (oldItems as any[]).some((item:any) => item.status === "feedback");
+    if (ret.warehouse_review_status !== "feedback" && ret.status !== "feedback" && !hasItemFeedback) {
+      throw new Error("Chỉ chỉnh được Phiếu trả đang có phản hồi");
+    }
+
+    const productIds = Array.from(new Set([...lines.map((x) => x.productId), ...(oldItems as any[]).map((x:any) => String(x.product_id))]));
+    const products = await tx`
+      SELECT id,code,name,warehouse_split_full_empty,returnable_container,active
+      FROM products
+      WHERE id IN ${tx(productIds)}
+    `;
+    const productById = new Map((products as any[]).map((product:any) => [String(product.id), product]));
+    for (const line of lines) {
+      const product = productById.get(line.productId) as any;
+      if (!product?.active || !product?.returnable_container) throw new Error("Có loại không hợp lệ để trả vỏ NCC");
+    }
+
+    const wh = ret.location_code === "PLANT" ? await getStockPointByCode("WH-PHC", tx) : null;
+    const [mine] = ret.location_code === "MINE"
+      ? await tx`SELECT sp.id FROM stock_points sp JOIN work_groups g ON g.id=sp.group_id WHERE g.code='COI' LIMIT 1`
+      : [null];
+    const pointId = ret.location_code === "MINE" ? mine?.id : wh?.id;
+    if (!pointId) throw new Error("Chưa cấu hình điểm tồn để điều chỉnh trả vỏ");
+    const occurredDate = toDateKey(ret.return_date);
+
+    const oldMap = new Map((oldItems as any[]).map((item:any) => [String(item.product_id), item]));
+    const newMap = new Map(lines.map((line) => [line.productId, line]));
+    const allProductIds = new Set([...oldMap.keys(), ...newMap.keys()]);
+
+    for (const productId of allProductIds) {
+      const oldItem = oldMap.get(productId) as any;
+      const newLine = newMap.get(productId);
+      const product = productById.get(productId) as any;
+      const oldQty = Number(oldItem?.confirmed_qty ?? oldItem?.declared_qty ?? 0);
+      const newQty = Number(newLine?.quantity || 0);
+      const diff = newQty - oldQty;
+
+      if (diff !== 0) {
+        await applySupplierReturnDifference({
+          tx, returnId, product, locationCode: ret.location_code, stockPointId: pointId,
+          diff, actorUserId: profile.id, occurredDate,
+        });
+      }
+
+      const isXL45 = ["LOX-XL45", "LIN-XL45"].includes(String(product?.code));
+      if (oldItem && isXL45 && diff !== 0) await restoreXL45Allocations(tx, String(oldItem.id));
+
+      if (!newLine && oldItem) {
+        await tx`DELETE FROM supplier_return_items WHERE id=${oldItem.id}::uuid`;
+        continue;
+      }
+
+      let itemId = oldItem?.id as string | undefined;
+      if (oldItem && newLine) {
+        await tx`
+          UPDATE supplier_return_items
+          SET declared_qty=${newQty},confirmed_qty=${newQty},status='confirmed',feedback=NULL
+          WHERE id=${oldItem.id}::uuid
+        `;
+      } else if (newLine) {
+        const [created] = await tx`
+          INSERT INTO supplier_return_items(supplier_return_id,product_id,declared_qty,confirmed_qty,status)
+          VALUES (${returnId}::uuid,${productId}::uuid,${newQty},${newQty},'confirmed')
+          RETURNING id
+        `;
+        itemId = created.id as string;
+      }
+
+      if (newLine && isXL45 && diff !== 0 && itemId) {
+        await allocateXL45Return(tx, itemId, productId, ret.source_location_id, occurredDate, newQty);
+      }
+    }
+
+    await tx`
+      UPDATE supplier_returns
+      SET status='completed',warehouse_review_status='pending',warehouse_reviewed_by=NULL,warehouse_reviewed_at=NULL
+      WHERE id=${returnId}::uuid
+    `;
+    await audit({
+      tx,
+      actorUserId: profile.id,
+      action: "supplier_return_revise_after_feedback",
+      entityType: "supplier_return",
+      entityId: returnId,
+      before: { items: oldItems, warehouse_review_status: ret.warehouse_review_status, warehouse_review_note: ret.warehouse_review_note },
+      after: { lines, warehouse_review_status: "pending", stockAdjustedByDifference: true },
+      note: "Bên nhập Phiếu trả đã chỉnh theo phản hồi và gửi lại Trưởng kho duyệt.",
+    });
+  });
+}
+
 export async function feedbackSupplierReturnItem(profile: Profile, itemId: string, feedback: string) {
   if (profile.role !== "supplier" || !profile.organization_id) throw new Error("Chỉ NCC được phản hồi Phiếu trả vỏ");
   const message = feedback.trim();
@@ -274,6 +488,16 @@ export async function reviewSupplierReturnByWarehouseManager(
     `;
     if (!ret) throw new Error("Không tìm thấy Phiếu trả vỏ");
     if (ret.status === "cancelled") throw new Error("Phiếu trả vỏ đã hủy");
+    if (decision === "approve") {
+      const [feedbackRows] = await tx`
+        SELECT count(*) FILTER (WHERE status='feedback')::int AS feedback_count
+        FROM supplier_return_items
+        WHERE supplier_return_id=${returnId}::uuid
+      `;
+      if (ret.status === "feedback" || Number(feedbackRows?.feedback_count || 0) > 0) {
+        throw new Error("Phiếu đang có phản hồi; cần bên nhập chỉnh lại và gửi lại trước khi Trưởng kho duyệt");
+      }
+    }
 
     const before = {
       warehouse_review_status: ret.warehouse_review_status,

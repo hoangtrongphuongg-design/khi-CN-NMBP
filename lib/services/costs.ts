@@ -165,6 +165,7 @@ export async function getCylinderRentalDaily(params: {
             CASE
               WHEN sl.reference_type IN ('supplier_delivery','supplier_delivery_mine') AND sl.delta>0 THEN sl.delta
               WHEN sl.reference_type='supplier_return' AND sl.delta<0 THEN sl.delta
+              WHEN sl.reference_type='supplier_return_revision' THEN sl.delta
               ELSE 0
             END
           ),0)
@@ -180,7 +181,11 @@ export async function getCylinderRentalDaily(params: {
     LEFT JOIN LATERAL (
       SELECT
         COALESCE(SUM(CASE WHEN sl.reference_type IN ('supplier_delivery','supplier_delivery_mine') AND sl.delta>0 THEN sl.delta ELSE 0 END),0)::numeric AS supplier_in,
-        COALESCE(SUM(CASE WHEN sl.reference_type='supplier_return' AND sl.delta<0 THEN -sl.delta ELSE 0 END),0)::numeric AS supplier_out
+        COALESCE(SUM(CASE
+          WHEN sl.reference_type='supplier_return' AND sl.delta<0 THEN -sl.delta
+          WHEN sl.reference_type='supplier_return_revision' THEN -sl.delta
+          ELSE 0
+        END),0)::numeric AS supplier_out
       FROM stock_ledger sl
       WHERE sl.product_id=p.id
         AND sl.occurred_at >= (days.day AT TIME ZONE 'Asia/Ho_Chi_Minh')

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireProfile } from "@/lib/auth/session";
-import { approveBorrow, createInternalRequest, executeInternalRequest, reviewInternalRequest } from "@/lib/services/internal";
+import { approveBorrow, createInternalRequest, executeInternalRequest, reviewInternalRequest, reviseInternalRequestAfterFeedback } from "@/lib/services/internal";
 
 function wantsJson(request: Request) {
   return (request.headers.get("accept") || "").includes("application/json");
@@ -39,6 +39,14 @@ export async function POST(request: Request) {
         execution.push({ itemId: String(form.get("request_id")), actualQty: Number(form.get("actual_qty") || 0), returnBucket: String(form.get("return_bucket") || "empty") as "full"|"empty" });
       }
       await executeInternalRequest(profile, String(form.get("request_id")), execution);
+    } else if (action === "revise_after_feedback") {
+      const ids = String(form.get("item_ids") || "").split(",").map((x) => x.trim()).filter(Boolean);
+      const execution = ids.map((id) => ({
+        itemId: id,
+        actualQty: Number(form.get(`actual_${id}`) || 0),
+        returnBucket: String(form.get(`bucket_${id}`) || "empty") as "full"|"empty",
+      }));
+      await reviseInternalRequestAfterFeedback(profile, String(form.get("request_id")), execution);
     } else if (action === "review_approve" || action === "review_feedback") {
       await reviewInternalRequest(profile, String(form.get("request_id")), action === "review_approve" ? "approve" : "feedback", String(form.get("feedback") || ""));
     } else throw new Error("Hành động không hợp lệ");

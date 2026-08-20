@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireProfile } from "@/lib/auth/session";
-import { createAndConfirmTransfer, submitTransferFeedback } from "@/lib/services/transfers";
+import { createAndConfirmTransfer, reviseTransferAfterFeedback, submitTransferFeedback } from "@/lib/services/transfers";
 
 export async function POST(request: Request) {
   const profile = await requireProfile();
@@ -13,6 +13,10 @@ export async function POST(request: Request) {
       // Tương thích form cũ nếu còn cache/deploy cũ.
       if (!items.length && form.get("product_id")) items = [{ productId: String(form.get("product_id")), quantity: Number(form.get("quantity") || 0), sourceBucket: String(form.get("source_bucket") || "full") as "full"|"empty"|"managed" }];
       await createAndConfirmTransfer(profile, { direction: String(form.get("direction")) as "plant_to_mine"|"mine_to_plant", transferDate: String(form.get("transfer_date")), items, note: String(form.get("note") || "") });
+    } else if (action === "revise_after_feedback") {
+      let items: Array<{ productId: string; quantity: number; sourceBucket?: "full"|"empty"|"managed" }> = [];
+      try { items = JSON.parse(String(form.get("items") || "[]")); } catch { items = []; }
+      await reviseTransferAfterFeedback(profile, String(form.get("transfer_id")), items);
     } else if (action === "feedback") {
       await submitTransferFeedback(profile, String(form.get("transfer_id")), String(form.get("feedback") || ""));
     } else throw new Error("Hành động không hợp lệ");

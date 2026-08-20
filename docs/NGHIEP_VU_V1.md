@@ -433,3 +433,16 @@ Có cơ cấu chi phí, xu hướng, top loại khí, bảng tổng hợp theo l
 - Duyệt hậu kiểm không phát sinh bút toán tồn lần hai. Nếu Trưởng kho phản hồi, hệ thống chỉ ghi trạng thái/nội dung phản hồi và **không tự hoàn tác tồn**.
 - Phiếu trả hiện có trước V1.0.35 được SQL 14 đưa vào hàng chờ hậu kiểm mà không thay đổi số tồn.
 - Dữ liệu giao/nhận NCC gốc không bị xóa.
+
+## V1.0.36 — Nguyên tắc phản hồi → chỉnh sửa → gửi lại
+
+- Khi một nghiệp vụ đang ở bước bên nhận/hậu kiểm và bị **Phản hồi**, quyền chỉnh sửa được mở lại cho đúng vai trò đã nhập/xác nhận phần dữ liệu đó.
+- Dữ liệu đã làm thay đổi tồn trước phản hồi không bị đảo toàn bộ. Khi người nhập sửa lại, hệ thống chỉ ghi bút toán **chênh lệch** giữa số cũ và số mới, đồng thời lưu audit trước/sau.
+- Phiếu giao NCC có hai tầng phản hồi:
+  - XSC phản hồi số NCC khai báo → NCC sửa số khai báo và gửi lại XSC.
+  - Trưởng kho phản hồi số XSC đã xác nhận → Workshop tại Nhà máy / XSC Mỏ tại Mỏ sửa số thực nhận và gửi lại Trưởng kho.
+- Phiếu trả vỏ NCC: Thủ kho tại Nhà máy / XSC Mỏ tại Mỏ được sửa số lượng, thêm loại còn thiếu hoặc xóa loại nhập nhầm sau phản hồi; tồn và số vỏ NCC chỉ thay đổi theo chênh lệch; phiếu quay lại `Chờ Trưởng kho duyệt`.
+- Phiếu Đổi/Mượn/Trả nội bộ: Thủ kho được sửa số thực tế sau phản hồi hậu kiểm và gửi lại.
+- Điều chuyển: bên lập phiếu được sửa sau phản hồi của bên nhận (Nhà máy → Mỏ: Workshop/Trưởng kho; Mỏ → Nhà máy: XSC Mỏ).
+- Khi đã được duyệt cuối cùng thì dữ liệu bị khóa; sai sau duyệt cuối phải xử lý bằng cơ chế điều chỉnh/audit riêng, không sửa âm thầm.
+- Không thay đổi bố cục mobile/desktop đã khóa ngoài các nút/form chỉnh sửa chỉ xuất hiện khi phiếu thật sự ở trạng thái phản hồi.

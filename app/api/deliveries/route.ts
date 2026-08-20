@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireProfile } from "@/lib/auth/session";
-import { confirmDeliveryItem, createSupplierDelivery, finalizeDeliveryByPhc, resubmitDeliveryItem } from "@/lib/services/deliveries";
-import { createSupplierReturn, feedbackSupplierReturnItem, reviewSupplierReturnByWarehouseManager } from "@/lib/services/supplier-returns";
+import { confirmDeliveryItem, createSupplierDelivery, finalizeDeliveryByPhc, resubmitDeliveryItem, reviseConfirmedDeliveryItem } from "@/lib/services/deliveries";
+import { createSupplierReturn, feedbackSupplierReturnItem, reviewSupplierReturnByWarehouseManager, reviseSupplierReturn } from "@/lib/services/supplier-returns";
 
 function back(request: Request, params: string) {
   return NextResponse.redirect(new URL(`/deliveries?${params}`, request.url), 303);
@@ -22,6 +22,8 @@ export async function POST(request: Request) {
       });
     } else if (action === "supplier_resubmit_delivery_item") {
       await resubmitDeliveryItem(profile, String(form.get("item_id")), Number(form.get("declared_qty") || 0));
+    } else if (action === "xsc_revise_delivery_item") {
+      await reviseConfirmedDeliveryItem(profile, String(form.get("item_id")), Number(form.get("actual_qty") || 0));
     } else if (action === "confirm_delivery_item" || action === "feedback_delivery_item") {
       await confirmDeliveryItem(
         profile,
@@ -39,6 +41,10 @@ export async function POST(request: Request) {
         lines,
         note: String(form.get("note") || ""),
       });
+    } else if (action === "revise_supplier_return") {
+      tab = String(form.get("return_tab") || "returns") === "deliveries" ? "deliveries" : "returns";
+      const lines = JSON.parse(String(form.get("lines") || "[]"));
+      await reviseSupplierReturn(profile, String(form.get("return_id")), lines);
     } else if (action === "feedback_supplier_return_item") {
       tab = "returns";
       await feedbackSupplierReturnItem(profile, String(form.get("item_id")), String(form.get("feedback") || ""));

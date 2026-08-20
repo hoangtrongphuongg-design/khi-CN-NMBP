@@ -183,3 +183,58 @@ export function TransferQuickForm({ products, direction, today }: { products: Tr
     {removeIndex != null ? <div className="fixed inset-0 z-[96] grid place-items-center bg-slate-950/40 p-4"><div className="w-full max-w-sm rounded-2xl border border-[var(--border)] bg-white p-5 shadow-2xl"><div className="flex gap-3"><div className="grid h-10 w-10 place-items-center rounded-full bg-red-50 text-[var(--danger)]"><Trash2 size={19}/></div><div><h3 className="m-0 text-base font-extrabold">Xóa loại khí khỏi lệnh?</h3><p className="mt-1 text-sm text-[var(--muted-foreground)]">Dòng đang chọn sẽ được bỏ khỏi điều chuyển.</p></div></div><div className="mt-5 grid grid-cols-2 gap-2"><button type="button" onClick={() => setRemoveIndex(null)} className="min-h-11 rounded-xl border border-[var(--border)] font-bold">Hủy</button><button type="button" onClick={confirmRemove} className="min-h-11 rounded-xl bg-[var(--danger)] font-bold text-white">Xóa dòng</button></div></div></div> : null}
   </>;
 }
+
+export function TransferRevisionForm({
+  products,
+  direction,
+  transferId,
+  initialItems,
+}: {
+  products: TransferProduct[];
+  direction: TransferDirection;
+  transferId: string;
+  initialItems: Array<{ product_id: string; quantity: number; source_bucket: "full" | "empty" | "managed" }>;
+}) {
+  const [items, setItems] = useState<TransferItem[]>(() => initialItems.map((item) => ({
+    key: crypto.randomUUID(),
+    productId: String(item.product_id),
+    quantity: String(Number(item.quantity || 0)),
+    sourceBucket: direction === "plant_to_mine" ? (item.source_bucket === "empty" ? "empty" : "full") : "managed",
+  })));
+  const payload = useMemo(() => items.map(({ productId, quantity, sourceBucket }) => ({ productId, quantity: qtyNumber(quantity), sourceBucket })), [items]);
+  const canSubmit = items.length > 0 && items.every((item) => item.productId && qtyNumber(item.quantity) > 0);
+
+  function addItem() {
+    const next = products.find((p) => !items.some((x) => x.productId === p.id));
+    if (!next) return;
+    setItems((old) => [...old, { key: crypto.randomUUID(), productId: next.id, quantity: "", sourceBucket: direction === "plant_to_mine" ? "full" : "managed" }]);
+  }
+
+  return <form action="/api/transfers" method="post" className="mt-3 rounded-2xl border border-red-200 bg-red-50/40 p-3">
+    <input type="hidden" name="action" value="revise_after_feedback"/>
+    <input type="hidden" name="transfer_id" value={transferId}/>
+    <input type="hidden" name="items" value={JSON.stringify(payload)}/>
+    <div className="text-sm font-extrabold text-[var(--danger)]">Chỉnh số liệu theo phản hồi</div>
+    <p className="mb-3 mt-1 text-xs text-[var(--muted-foreground)]">Tồn đã cập nhật ở lần xác nhận trước. Hệ thống chỉ điều chỉnh phần chênh lệch và lưu lịch sử.</p>
+    <div className="grid gap-2">
+      {items.map((item, index) => <div key={item.key} className="grid gap-2 rounded-xl bg-white p-3 md:grid-cols-[1.4fr_.8fr_.8fr_auto] md:items-end">
+        <label className="grid gap-1 text-xs font-bold">Loại khí
+          <select value={item.productId} onChange={(e) => setItems((old) => old.map((x, i) => i === index ? { ...x, productId: e.target.value } : x))} className="min-h-11 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold">
+            {products.filter((p) => p.id === item.productId || !items.some((x, i) => i !== index && x.productId === p.id)).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </label>
+        <label className="grid gap-1 text-xs font-bold">Số lượng
+          <input value={item.quantity} onChange={(e) => setItems((old) => old.map((x, i) => i === index ? { ...x, quantity: e.target.value.replace(/\D/g, "") } : x))} inputMode="numeric" pattern="[0-9]*" type="text" autoComplete="off" placeholder="Nhập SL" className="min-h-11 rounded-xl border border-[var(--border)] px-3 font-mono-data font-extrabold outline-none"/>
+        </label>
+        {direction === "plant_to_mine" ? <label className="grid gap-1 text-xs font-bold">Loại chai
+          <select value={item.sourceBucket} onChange={(e) => setItems((old) => old.map((x, i) => i === index ? { ...x, sourceBucket: e.target.value as "full" | "empty" } : x))} className="min-h-11 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold"><option value="full">Chai đầy</option><option value="empty">Chai rỗng</option></select>
+        </label> : <div className="rounded-xl bg-[var(--paper)] p-3 text-xs font-bold">Mỏ → Kho · Vỏ rỗng</div>}
+        <button type="button" onClick={() => setItems((old) => old.filter((_, i) => i !== index))} disabled={items.length <= 1} className="rounded-xl p-2.5 text-[var(--danger)] hover:bg-red-50 disabled:opacity-30" aria-label="Xóa dòng"><Trash2 size={18}/></button>
+      </div>)}
+    </div>
+    <div className="mt-3 flex flex-wrap gap-2">
+      <Button type="button" variant="secondary" onClick={addItem} disabled={items.length >= products.length}><Plus size={17}/>Thêm loại khí</Button>
+      <Button type="submit" disabled={!canSubmit} className="ml-auto">Cập nhật & gửi lại kiểm tra</Button>
+    </div>
+  </form>;
+}

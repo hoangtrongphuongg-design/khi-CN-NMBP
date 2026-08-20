@@ -2,6 +2,7 @@ import { sql } from "@/lib/db";
 import type { Profile } from "@/types/app";
 import { applyStockDelta, audit, getStockPointByCode } from "@/lib/stock";
 import { checkLowStock } from "@/lib/notifications/low-stock";
+import { toDateKey } from "@/lib/utils";
 
 type TransferItemInput = {
   productId: string;
@@ -91,6 +92,111 @@ export async function createAndConfirmTransfer(profile: Profile, input: {
   });
   for (const productId of lowStockProductIds) await checkLowStock(productId);
   return result;
+}
+
+
+export async function reviseTransferAfterFeedback(profile: Profile, transferId: string, inputItems: TransferItemInput[]) {
+  const lowStockProductIds = new Set<string>();
+  await sql.begin(async (tx) => {
+    const [tr] = await tx`
+      SELECT id,direction,transfer_date,status,feedback,created_by
+      FROM transfers
+      WHERE id=${transferId}::uuid
+      FOR UPDATE
+    `;
+    if (!tr) throw new Error("Không tìm thấy phiếu điều chuyển");
+    if (tr.status !== "feedback") throw new Error("Chỉ chỉnh được phiếu đang có phản hồi");
+
+    const canRevise = tr.direction === "plant_to_mine"
+      ? ["workshop","warehouse_manager"].includes(profile.role)
+      : profile.role === "mine_xsc";
+    if (!canRevise) throw new Error("Bạn không có quyền chỉnh phiếu điều chuyển này");
+
+    const items = inputItems
+      .filter((x) => x.productId && Number(x.quantity) > 0)
+      .map((x) => ({
+        productId: String(x.productId),
+        quantity: Number(x.quantity),
+        sourceBucket: tr.direction === "plant_to_mine"
+          ? (x.sourceBucket === "empty" ? "empty" : "full") as "full"|"empty"
+          : "managed" as const,
+      }));
+    if (!items.length) throw new Error("Phiếu phải còn ít nhất một loại khí");
+
+    const seen = new Set<string>();
+    for (const item of items) {
+      const key = `${item.productId}:${item.sourceBucket}`;
+      if (seen.has(key)) throw new Error("Một loại khí và loại chai không được lặp trong cùng phiếu");
+      seen.add(key);
+      const [valid] = await tx`
+        SELECT id FROM products
+        WHERE id=${item.productId}::uuid AND active=true AND returnable_container=true AND warehouse_split_full_empty=true
+        LIMIT 1
+      `;
+      if (!valid) throw new Error("Có loại khí không hợp lệ cho điều chuyển chai/vỏ");
+    }
+
+    const oldRows = await tx`
+      SELECT product_id,quantity::float8 AS quantity,source_bucket
+      FROM transfer_items
+      WHERE transfer_id=${transferId}::uuid
+      FOR UPDATE
+    `;
+    const oldMap = new Map<string, any>();
+    for (const row of oldRows as any[]) oldMap.set(`${row.product_id}:${row.source_bucket}`, row);
+    const newMap = new Map<string, any>();
+    for (const item of items) newMap.set(`${item.productId}:${item.sourceBucket}`, item);
+
+    const wh = await getStockPointByCode("WH-PHC", tx);
+    const mine = await getMineStockPoint(tx);
+    const keys = new Set([...oldMap.keys(), ...newMap.keys()]);
+
+    for (const key of keys) {
+      const oldItem = oldMap.get(key);
+      const newItem = newMap.get(key);
+      const productId = String(newItem?.productId || oldItem?.product_id);
+      const sourceBucket = String(newItem?.sourceBucket || oldItem?.source_bucket) as "full"|"empty"|"managed";
+      const oldQty = Number(oldItem?.quantity || 0);
+      const newQty = Number(newItem?.quantity || 0);
+      const diff = newQty - oldQty;
+      if (Math.abs(diff) < 0.000001) continue;
+
+      if (tr.direction === "plant_to_mine") {
+        await applyStockDelta({ tx, stockPointId: wh.id, productId, bucket: sourceBucket as "full"|"empty", delta: -diff, referenceType: "transfer_revision_out", referenceId: transferId, actorUserId: profile.id, occurredDate: toDateKey(tr.transfer_date), note: "Điều chỉnh điều chuyển sau phản hồi" });
+        await applyStockDelta({ tx, stockPointId: mine.id, productId, bucket: "managed", delta: diff, referenceType: "transfer_revision_in", referenceId: transferId, actorUserId: profile.id, occurredDate: toDateKey(tr.transfer_date), note: "Điều chỉnh điều chuyển sau phản hồi" });
+        if (sourceBucket === "full") lowStockProductIds.add(productId);
+      } else {
+        await applyStockDelta({ tx, stockPointId: mine.id, productId, bucket: "managed", delta: -diff, referenceType: "transfer_revision_out", referenceId: transferId, actorUserId: profile.id, occurredDate: toDateKey(tr.transfer_date), note: "Điều chỉnh điều chuyển sau phản hồi" });
+        await applyStockDelta({ tx, stockPointId: wh.id, productId, bucket: "empty", delta: diff, referenceType: "transfer_revision_in", referenceId: transferId, actorUserId: profile.id, occurredDate: toDateKey(tr.transfer_date), note: "Điều chỉnh điều chuyển sau phản hồi" });
+      }
+    }
+
+    await tx`DELETE FROM transfer_items WHERE transfer_id=${transferId}::uuid`;
+    for (const item of items) {
+      await tx`
+        INSERT INTO transfer_items(transfer_id,product_id,quantity,source_bucket,received_qty)
+        VALUES (${transferId}::uuid,${item.productId}::uuid,${item.quantity},${item.sourceBucket},${item.quantity})
+      `;
+    }
+    await tx`
+      UPDATE transfers
+      SET status='completed',feedback=NULL,reviewed_by=NULL,reviewed_at=NULL,
+          dispatched_by=${profile.id}::uuid,dispatched_at=now()
+      WHERE id=${transferId}::uuid
+    `;
+    await audit({
+      tx,
+      actorUserId: profile.id,
+      action: "transfer_revise_after_feedback",
+      entityType: "transfer",
+      entityId: transferId,
+      before: { items: oldRows, feedback: tr.feedback },
+      after: { items, status: "completed" },
+      note: "Bên lập điều chuyển đã chỉnh số liệu theo phản hồi; tồn chỉ điều chỉnh phần chênh lệch.",
+    });
+  });
+
+  for (const productId of lowStockProductIds) await checkLowStock(productId);
 }
 
 export async function submitTransferFeedback(profile: Profile, transferId: string, feedback: string) {
