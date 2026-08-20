@@ -370,3 +370,21 @@ Có cơ cấu chi phí, xu hướng, top loại khí, bảng tổng hợp theo l
 - Dữ liệu hiện tại = số dư đầu kỳ + Phiếu giao NCC đã hoàn tất - Phiếu trả NCC; không dùng luân chuyển nội bộ để tính.
 - KPI `Vỏ chai khí CN` chỉ là tổng nhóm chai khí công nghiệp; XL-45 và LPG hiển thị riêng vì khác đơn vị.
 
+## Tổng quan Đốc công / Giám sát — mobile + desktop (V1.0.29)
+
+### Mobile đã chốt
+- Chỉ ưu tiên 4 khu vực: `Việc cần xử lý` → `Đổi / Mượn / Trả` → `Tồn Kho Hậu cần` → `Số chai nhóm đang quản lý`.
+- `Việc cần xử lý` chỉ hiện mục có số lượng >0. Nếu đúng 1 phiếu thì mở thẳng phiếu; nếu nhiều phiếu thì mở danh sách đã lọc đúng điều kiện.
+- Tồn Kho Hậu cần chỉ hiện tên đầy đủ + Đầy + Rỗng từng loại; tên dài được xuống dòng, không dùng `...`.
+- Số chai nhóm đang quản lý chỉ hiện tổng từng loại của chính nhóm; không tách đầy/rỗng; loại bằng 0 ẩn.
+- Ẩn `Số chai & tồn kho` khỏi điều hướng mobile của Đốc công/Giám sát vì dữ liệu cần thiết đã có ngay trên Tổng quan. Desktop vẫn giữ menu này.
+- Không hiển thị Vỏ thuê NCC, lũy kế sử dụng hoặc hoạt động dài trên mobile.
+
+### Desktop đã chốt
+- Hàng KPI: Yêu cầu đang chờ / Có phản hồi / Xử lý chưa đủ / Tổng chai nhóm đang quản lý. Ba KPI công việc là deep-link tác vụ.
+- Hai khối song song: Tồn Kho Hậu cần (Đầy/Rỗng) và Số chai nhóm đang quản lý (tổng từng loại).
+- Bảng `Lũy kế sử dụng khí của nhóm`: Tháng này + từ 01/01 đến hôm nay, tính duy nhất theo SL thực tế Phiếu Đổi đã hoàn tất; không cộng Mượn/Trả.
+- Đốc công/Giám sát được xem `Vỏ/bồn NCC` trên Tổng quan desktop giống Workshop, chỉ xem số lượng và không xem chi phí.
+- Cuối trang có hoạt động gần đây của chính nhóm.
+- Đốc công/Giám sát không được xem chi phí/Báo cáo tài chính.
+

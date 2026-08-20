@@ -73,9 +73,12 @@ function accountSubtitle(profile: Profile) {
 
 export function AppShell({ profile, children }: { profile: Profile; children: React.ReactNode }) {
   const nav = navFor(profile);
-  const primary = mobilePrimary(profile, nav);
+  // Đốc công/Giám sát đã có tồn Kho + số chai nhóm ngay trên Tổng quan mobile.
+  // Chỉ ẩn trang Tồn kho ở điều hướng điện thoại; desktop vẫn giữ đầy đủ menu.
+  const mobileNav = ["foreman","supervisor"].includes(profile.role) ? nav.filter((x) => x.key !== "inventory") : nav;
+  const primary = mobilePrimary(profile, mobileNav);
   const primaryKeys = new Set(primary.map((x) => x.key));
-  const more = nav.filter((x) => !primaryKeys.has(x.key));
+  const more = mobileNav.filter((x) => !primaryKeys.has(x.key));
   const mobileCount = primary.length + (more.length ? 1 : 0);
 
   return <div className={`role-shell role-${profile.role} min-h-screen md:grid md:grid-cols-[220px_1fr]`}>

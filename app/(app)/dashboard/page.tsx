@@ -21,8 +21,8 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { requireProfile } from "@/lib/auth/session";
 import { canCreateGroupRequest } from "@/lib/auth/permissions";
-import { getCostSnapshot, getDashboardData, getRentalSnapshot } from "@/lib/services/dashboard";
-import { listInternalRequests } from "@/lib/services/internal";
+import { getCostSnapshot, getDashboardData, getGroupUsageSnapshot, getRentalSnapshot } from "@/lib/services/dashboard";
+import { getGroupQuickData, listInternalRequests } from "@/lib/services/internal";
 import { listDeliveries } from "@/lib/services/deliveries";
 import { listTransfers } from "@/lib/services/transfers";
 import { formatCurrency, formatNumber, toDateInput, toDateKey } from "@/lib/utils";
@@ -159,32 +159,126 @@ async function StorekeeperHome({ profile }: { profile: Profile }) {
 }
 
 async function GroupHome({ profile }: { profile: Profile }) {
-  const requests = await listInternalRequests(profile) as any[];
-  const pending = requests.filter((r) => ["pending","approved","executed_pending_review"].includes(r.status)).length;
-  const feedback = requests.filter((r) => r.status === "feedback").length;
-  const partial = requests.filter((r) => Array.isArray(r.items) && r.items.some((i:any) => i.actual_qty != null && Number(i.actual_qty) < Number(i.requested_qty))).length;
-  const canCreate = canCreateGroupRequest(profile) && profile.location_code !== "MINE";
   const isWorker = profile.role === "worker";
+  if (isWorker) {
+    const requests = await listInternalRequests(profile) as any[];
+    return <div className="overview-page">
+      <PageHeading title="Tổng quan" subtitle="Theo dõi hoạt động gần đây của nhóm."/>
+      <RecentActivity requests={requests}/>
+    </div>;
+  }
 
-  return <div className="overview-page">
-    <PageHeading title="Tổng quan" subtitle={isWorker ? "Theo dõi hoạt động gần đây của nhóm." : "Việc của nhóm và thao tác nhanh trên điện thoại."}/>
-    <MetricGrid>
-      <Metric icon={<Clock3/>} label="Yêu cầu đang chờ" value={pending}/>
-      <Metric icon={<MessageCircleWarning/>} label="Có phản hồi" value={feedback} tone={feedback ? "warning" : "success"}/>
-      <Metric icon={<ClipboardCheck/>} label="Xử lý chưa đủ" value={partial} tone={partial ? "warning" : "success"}/>
-    </MetricGrid>
-    {!isWorker ? <AttentionPanel items={[
-      task(feedback, "Yêu cầu có phản hồi", "/internal?status=feedback", "Mở đúng phiếu để kiểm tra", "danger"),
-      task(pending, "Yêu cầu đang xử lý", "/internal?status=active", "Theo dõi tiến độ phiếu của nhóm", "info"),
-      task(partial, "Yêu cầu thực hiện thiếu", "/internal?status=executed_pending_review", "Đối chiếu số yêu cầu / thực tế", "warning"),
-    ]}/> : null}
+  const [requestsRaw, quickProductsRaw, usage, rental] = await Promise.all([
+    listInternalRequests(profile),
+    getGroupQuickData(profile),
+    getGroupUsageSnapshot(profile),
+    getRentalSnapshot(),
+  ]);
+  const requests = requestsRaw as any[];
+  const quickProducts = sortGroupProducts(quickProductsRaw as any[]);
+  const waitingRows = requests.filter((r) => ["pending","approved","executed_pending_review"].includes(r.status));
+  const feedbackRows = requests.filter((r) => r.status === "feedback");
+  const partialRows = requests.filter((r) => !["completed","cancelled","rejected"].includes(r.status) && Array.isArray(r.items) && r.items.some((i:any) => i.actual_qty != null && Number(i.actual_qty) < Number(i.requested_qty)));
+  const groupRows = quickProducts.filter((p:any) => Number(p.groupQty || 0) > 0);
+  const warehouseRows = quickProducts.filter((p:any) => Number(p.warehouseFull || 0) !== 0 || Number(p.warehouseEmpty || 0) !== 0);
+  const groupTotal = groupRows.reduce((sum:number, p:any) => sum + Number(p.groupQty || 0), 0);
+  const canCreate = canCreateGroupRequest(profile) && profile.location_code !== "MINE";
+
+  const waitingHref = taskHref(waitingRows, "/internal?status=waiting");
+  const feedbackHref = taskHref(feedbackRows, "/internal?status=feedback");
+  const partialHref = taskHref(partialRows, "/internal?status=active&partial=1");
+
+  return <div className="overview-page group-role-dashboard">
+    <PageHeading title="Tổng quan" subtitle={`${profile.group_name || "Nhóm"} · công việc, tồn Kho và số chai đang quản lý.`}/>
+
+    <section className="group-task-desktop" aria-label="Tình trạng công việc của nhóm">
+      <Link className="group-task-metric" href={waitingHref}><div><span>Yêu cầu đang chờ</span><strong>{formatNumber(waitingRows.length)}</strong></div><b>→</b></Link>
+      <Link className={`group-task-metric${feedbackRows.length ? " is-warning" : ""}`} href={feedbackHref}><div><span>Có phản hồi</span><strong>{formatNumber(feedbackRows.length)}</strong></div><b>→</b></Link>
+      <Link className={`group-task-metric${partialRows.length ? " is-warning" : ""}`} href={partialHref}><div><span>Xử lý chưa đủ</span><strong>{formatNumber(partialRows.length)}</strong></div><b>→</b></Link>
+      <div className="group-task-metric is-static"><div><span>Nhóm đang quản lý</span><strong>{formatNumber(groupTotal)} <small>chai</small></strong></div><Boxes/></div>
+    </section>
+
+    <section className="group-task-mobile" aria-label="Việc cần xử lý">
+      <div className="group-mobile-section-title"><strong>Việc cần xử lý</strong><span>Bấm để đi thẳng tới tác vụ</span></div>
+      <div className="group-mobile-task-list">
+        {waitingRows.length ? <Link href={waitingHref}><strong>{formatNumber(waitingRows.length)}</strong><span>Yêu cầu đang chờ</span><b>→</b></Link> : null}
+        {feedbackRows.length ? <Link href={feedbackHref} className="is-warning"><strong>{formatNumber(feedbackRows.length)}</strong><span>Có phản hồi</span><b>→</b></Link> : null}
+        {partialRows.length ? <Link href={partialHref} className="is-warning"><strong>{formatNumber(partialRows.length)}</strong><span>Xử lý chưa đủ</span><b>→</b></Link> : null}
+        {!waitingRows.length && !feedbackRows.length && !partialRows.length ? <div className="group-mobile-clear"><CheckCircle2/><span>Hiện không có việc cần xử lý.</span></div> : null}
+      </div>
+    </section>
+
     {canCreate ? <QuickActions items={[
       { href: "/internal?action=exchange", label: "Đổi", icon: <Repeat2/> },
       { href: "/internal?action=borrow", label: "Mượn", icon: <Handshake/> },
       { href: "/internal?action=return", label: "Trả", icon: <RotateCcw/> },
     ]}/> : null}
-    <RecentActivity requests={requests}/>
+
+    <section className="group-stock-overview-grid">
+      <GroupWarehousePanel rows={warehouseRows}/>
+      <GroupManagedPanel groupName={profile.group_name || "Nhóm"} rows={groupRows} total={groupTotal}/>
+    </section>
+
+    <div className="group-desktop-only">
+      <GroupUsagePanel usage={usage}/>
+    </div>
+
+    <div className="group-desktop-only">
+      <RentalPanel rental={rental}/>
+    </div>
+
+    <div className="group-desktop-only">
+      <RecentActivity requests={requests}/>
+    </div>
   </div>;
+}
+
+function taskHref(rows: any[], fallback: string) {
+  return rows.length === 1 ? `/internal?focus=${rows[0].id}` : fallback;
+}
+
+const groupProductOrder: Record<string, number> = { O2: 1, CO2: 2, N2: 3, ARCO2: 4, LPG12: 5, LPG45: 6, AR: 7 };
+function sortGroupProducts<T extends { code?: string }>(rows: T[]) {
+  return [...rows].sort((a,b) => (groupProductOrder[String(a.code)] ?? 100) - (groupProductOrder[String(b.code)] ?? 100));
+}
+
+function GroupWarehousePanel({ rows }: { rows: any[] }) {
+  return <Card className="overview-panel group-stock-panel">
+    <div className="overview-panel-head"><div><CardTitle>Tồn Kho Hậu cần</CardTitle><p>Số chai đầy/rỗng hiện có để phục vụ Đổi · Mượn · Trả.</p></div></div>
+    <div className="group-simple-table group-warehouse-table">
+      <div className="group-simple-head"><span>Loại khí</span><span>Đầy</span><span>Rỗng</span></div>
+      {rows.length ? rows.map((row:any) => <div className="group-simple-row" key={row.id}>
+        <div><strong>{row.name}</strong><small>{row.code}</small></div>
+        <strong className="qty-full">{formatNumber(Number(row.warehouseFull || 0))}</strong>
+        <strong className="qty-empty">{formatNumber(Number(row.warehouseEmpty || 0))}</strong>
+      </div>) : <div className="group-simple-empty">Chưa có số liệu tồn Kho Hậu cần.</div>}
+    </div>
+  </Card>;
+}
+
+function GroupManagedPanel({ groupName, rows, total }: { groupName: string; rows: any[]; total: number }) {
+  return <Card className="overview-panel group-stock-panel">
+    <div className="overview-panel-head"><div><CardTitle>Số chai nhóm đang quản lý</CardTitle><p>{groupName} · chỉ hiển thị tổng từng loại, không tách đầy/rỗng.</p></div><div className="group-managed-total"><strong>{formatNumber(total)}</strong><span>chai</span></div></div>
+    <div className="group-simple-table group-managed-table">
+      <div className="group-simple-head"><span>Loại khí</span><span>Số lượng</span></div>
+      {rows.length ? rows.map((row:any) => <div className="group-simple-row" key={row.id}>
+        <div><strong>{row.name}</strong><small>{row.code}</small></div>
+        <strong className="qty-managed">{formatNumber(Number(row.groupQty || 0))}</strong>
+      </div>) : <div className="group-simple-empty">Nhóm hiện chưa quản lý chai nào.</div>}
+    </div>
+  </Card>;
+}
+
+function GroupUsagePanel({ usage }: { usage: Awaited<ReturnType<typeof getGroupUsageSnapshot>> }) {
+  return <Card className="overview-panel group-usage-panel">
+    <div className="overview-panel-head"><div><CardTitle>Lũy kế sử dụng khí của nhóm</CardTitle><p>Tính theo số lượng thực tế của Phiếu Đổi đã hoàn tất; không cộng Mượn và Trả.</p></div></div>
+    <div className="group-usage-table-wrap">
+      <table className="group-usage-table"><thead><tr><th>Loại khí</th><th>Tháng này</th><th>Lũy kế từ 01/01/{usage.asOfDate.slice(0,4)}</th></tr></thead><tbody>
+        {usage.rows.map((row) => <tr key={row.product_code}><td><strong>{row.product_name}</strong><small>{row.product_code}</small></td><td>{formatNumber(row.month_qty)} <span>{row.unit}</span></td><td>{formatNumber(row.year_qty)} <span>{row.unit}</span></td></tr>)}
+      </tbody></table>
+      {!usage.rows.length ? <div className="group-simple-empty">Chưa có Phiếu Đổi hoàn tất trong năm {usage.asOfDate.slice(0,4)}.</div> : null}
+    </div>
+  </Card>;
 }
 
 async function MineHome({ profile }: { profile: Profile }) {

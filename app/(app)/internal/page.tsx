@@ -14,7 +14,7 @@ import { formatNumber } from "@/lib/utils";
 
 const typeLabel: Record<string,string> = { exchange: "Đổi chai", borrow: "Mượn thêm", return: "Trả chai" };
 
-export default async function InternalPage({ searchParams }: { searchParams: Promise<{ error?: string; ok?: string; type?: string; status?: string; focus?: string; action?: string }> }) {
+export default async function InternalPage({ searchParams }: { searchParams: Promise<{ error?: string; ok?: string; type?: string; status?: string; focus?: string; action?: string; partial?: string }> }) {
   const profile = await requireProfile();
   if (profile.role === "supplier") redirect("/dashboard");
   const params = await searchParams;
@@ -24,11 +24,14 @@ export default async function InternalPage({ searchParams }: { searchParams: Pro
   const typeFilter = ["exchange","borrow","return"].includes(String(params.type || "")) ? String(params.type) : null;
   const statusFilter = String(params.status || "");
   const focusId = String(params.focus || "");
+  const partialOnly = params.partial === "1";
   const requests = requestsAll.filter((r:any) => {
     if (focusId && r.id !== focusId) return false;
     if (typeFilter && r.request_type !== typeFilter) return false;
     if (statusFilter === "active" && ["completed","cancelled","rejected"].includes(r.status)) return false;
-    if (statusFilter && statusFilter !== "active" && r.status !== statusFilter) return false;
+    if (statusFilter === "waiting" && !["pending","approved","executed_pending_review"].includes(r.status)) return false;
+    if (statusFilter && !["active","waiting"].includes(statusFilter) && r.status !== statusFilter) return false;
+    if (partialOnly && !(Array.isArray(r.items) && r.items.some((i:any) => i.actual_qty != null && Number(i.actual_qty) < Number(i.requested_qty)))) return false;
     return true;
   });
   const canCreate = canCreateGroupRequest(profile) && profile.location_code !== "MINE";
@@ -41,7 +44,7 @@ export default async function InternalPage({ searchParams }: { searchParams: Pro
     <section className="role-metrics four"><MiniMetric icon={<Repeat2/>} label="Đổi" value={count("exchange")}/><MiniMetric icon={<Handshake/>} label="Mượn" value={count("borrow")}/><MiniMetric icon={<RotateCcw/>} label="Trả" value={count("return")}/><MiniMetric icon={<MessageCircleWarning/>} label="Có chênh lệch" value={discrepancy}/></section></> : null}
     <div className="rounded-xl border border-[var(--border)] bg-white p-3 text-sm"><strong>Chế độ:</strong> {office ? "Trong giờ hành chính · T2–T6, 07:30–16:30" : "Ngoài giờ hành chính / ngày nghỉ"}</div>
     {params.error ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-[var(--danger)]">{params.error}</div> : null}
-    {(typeFilter || statusFilter || focusId) ? <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm"><span><strong>Đang mở đúng tác vụ từ Tổng quan.</strong> {requests.length} phiếu phù hợp.</span><a href="/internal" className="font-bold text-[var(--brand)]">Xem tất cả →</a></div> : null}
+    {(typeFilter || statusFilter || focusId || partialOnly) ? <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm"><span><strong>Đang mở đúng tác vụ từ Tổng quan.</strong> {requests.length} phiếu phù hợp.</span><a href="/internal" className="font-bold text-[var(--brand)]">Xem tất cả →</a></div> : null}
     {isGroupUser ? <GroupQuickPanel groupName={profile.group_name || "Nhóm"} products={quickProducts} canCreate={canCreate} compact defaultMode={(["exchange","borrow","return"].includes(String(params.action || "")) ? params.action : null) as "exchange"|"borrow"|"return"|null}/> : null}
 
     <Card className="overflow-hidden p-0"><div className="border-b border-[var(--border)] p-4 md:p-5"><div className="flex items-center justify-between gap-3"><CardTitle>Danh sách phiếu</CardTitle><span className="rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-bold text-[var(--brand)]">{requests.length} phiếu gần nhất</span></div></div><div className="grid gap-3 p-3 md:p-5">

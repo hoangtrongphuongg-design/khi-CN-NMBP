@@ -219,3 +219,79 @@ export async function getRentalSnapshot(): Promise<RentalSnapshot> {
   };
 }
 
+export type GroupUsageRow = {
+  product_code: string;
+  product_name: string;
+  unit: string;
+  month_qty: number;
+  year_qty: number;
+};
+
+/**
+ * Lũy kế sử dụng khí của một nhóm = SL thực tế của Phiếu Đổi đã HOÀN TẤT.
+ * Không cộng Mượn/Trả và không dùng SL yêu cầu.
+ * Mốc sử dụng lấy thời điểm thực hiện tại Kho (executed_at), fallback requested_at cho dữ liệu cũ.
+ */
+export async function getGroupUsageSnapshot(profile: Profile): Promise<{ monthStart: string; yearStart: string; asOfDate: string; rows: GroupUsageRow[] }> {
+  const today = toDateInput();
+  const yearStart = `${today.slice(0, 4)}-01-01`;
+  const monthStart = `${today.slice(0, 7)}-01`;
+  if (!profile.group_id || !["foreman","supervisor"].includes(profile.role)) {
+    return { monthStart, yearStart, asOfDate: today, rows: [] };
+  }
+
+  const rows = await sql<any[]>`
+    WITH usage_lines AS (
+      SELECT
+        iri.product_id,
+        COALESCE(iri.actual_qty,0)::float8 AS actual_qty,
+        COALESCE(iri.executed_at,ir.executed_at,ir.requested_at) AS used_at
+      FROM internal_requests ir
+      JOIN internal_request_items iri ON iri.internal_request_id=ir.id
+      WHERE ir.group_id=${profile.group_id}::uuid
+        AND ir.request_type='exchange'
+        AND ir.status='completed'
+        AND COALESCE(iri.actual_qty,0)>0
+
+      UNION ALL
+
+      SELECT
+        ir.product_id,
+        COALESCE(ir.actual_qty,0)::float8 AS actual_qty,
+        COALESCE(ir.executed_at,ir.requested_at) AS used_at
+      FROM internal_requests ir
+      WHERE ir.group_id=${profile.group_id}::uuid
+        AND ir.request_type='exchange'
+        AND ir.status='completed'
+        AND COALESCE(ir.actual_qty,0)>0
+        AND NOT EXISTS (SELECT 1 FROM internal_request_items iri WHERE iri.internal_request_id=ir.id)
+    )
+    SELECT
+      p.code AS product_code,
+      p.name AS product_name,
+      p.unit,
+      COALESCE(SUM(CASE WHEN u.used_at >= (${monthStart}::date AT TIME ZONE 'Asia/Ho_Chi_Minh') THEN u.actual_qty ELSE 0 END),0)::float8 AS month_qty,
+      COALESCE(SUM(u.actual_qty),0)::float8 AS year_qty
+    FROM usage_lines u
+    JOIN products p ON p.id=u.product_id
+    WHERE u.used_at >= (${yearStart}::date AT TIME ZONE 'Asia/Ho_Chi_Minh')
+      AND u.used_at < ((${today}::date + 1) AT TIME ZONE 'Asia/Ho_Chi_Minh')
+    GROUP BY p.id,p.code,p.name,p.unit,p.display_order
+    HAVING COALESCE(SUM(u.actual_qty),0)>0
+    ORDER BY p.display_order,p.name
+  `;
+
+  return {
+    monthStart,
+    yearStart,
+    asOfDate: today,
+    rows: rows.map((row: any) => ({
+      product_code: String(row.product_code),
+      product_name: String(row.product_name),
+      unit: String(row.unit),
+      month_qty: Number(row.month_qty || 0),
+      year_qty: Number(row.year_qty || 0),
+    })),
+  };
+}
+
