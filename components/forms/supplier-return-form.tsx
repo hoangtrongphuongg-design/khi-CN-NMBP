@@ -35,7 +35,7 @@ export function SupplierReturnForm({
 
       <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-xs text-[var(--brand-deep)]">
         <div className="font-extrabold">Cùng chuyến {deliveryCode}</div>
-        <div className="mt-1">{locationName} · Không phát sinh thêm cước vận chuyển.</div>
+        <div className="mt-1"><strong>{locationName}</strong> · Địa điểm được hệ thống khóa theo vai trò, không thể chọn nhầm · Không phát sinh thêm cước vận chuyển.</div>
       </div>
 
       {lines.map((line, index) => (

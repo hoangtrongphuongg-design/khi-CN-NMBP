@@ -334,3 +334,16 @@ Có cơ cấu chi phí, xu hướng, top loại khí, bảng tổng hợp theo l
 - Bottom navigation tối đa 4 mục; chức năng ít dùng nằm dưới `Thêm`.
 - Một nghiệp vụ thông thường hướng đến 3 bước: bấm nghiệp vụ → nhập số lượng → xác nhận.
 - Desktop dùng cùng design system nhưng ưu tiên bảng, filter, đối chiếu, lịch sử, Excel và quản trị.
+
+
+## Phiếu giao NCC nhiều địa điểm trong cùng chuyến (V1.0.27)
+- 1 Phiếu giao NCC = 1 chuyến xe = 1 cước vận chuyển.
+- Một Phiếu giao có thể chứa dòng giao tại Nhà máy, Mỏ Tà Thiết hoặc đồng thời cả hai.
+- Form NCC chia cố định thành 2 vùng `Giao Nhà máy` và `Giao Mỏ Tà Thiết`; không dùng dropdown chọn một địa điểm chung cho cả Phiếu.
+- Cùng một loại khí được phép xuất hiện 1 lần tại Nhà máy và 1 lần tại Mỏ trong cùng Phiếu; không được lặp cùng loại tại cùng địa điểm.
+- Nếu Phiếu có bất kỳ dòng giao Mỏ thì toàn chuyến tính cước Mỏ; nếu chỉ có Nhà máy thì tính cước Nhà máy. CO2 lỏng chuyên dụng vẫn theo quy tắc cước chuyên dụng hiện hành.
+- XSC xác nhận theo địa điểm: Workshop chỉ xác nhận dòng Nhà máy, XSC Mỏ chỉ xác nhận dòng Mỏ. PHC hoàn tất sau khi toàn bộ dòng cần xác nhận đã đủ.
+- Trả vỏ cùng chuyến không tạo cước mới và có thể có 2 Phiếu trả độc lập cùng `trip_id`: 1 tại Nhà máy và 1 tại Mỏ.
+- Chỉ `storekeeper` được tạo trả vỏ tại Nhà máy; chỉ `mine_xsc` được tạo trả vỏ tại Mỏ. Backend tự suy ra địa điểm từ vai trò, không nhận dropdown địa điểm từ user.
+- Nút trả vỏ chỉ xuất hiện nếu Phiếu giao thực sự có dòng giao tại đúng địa điểm của user.
+- NCC không xác nhận lại Phiếu trả; chỉ xem và phản hồi nếu sai lệch.

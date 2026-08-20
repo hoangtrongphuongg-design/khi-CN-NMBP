@@ -90,13 +90,13 @@ export default async function DeliveriesPage({ searchParams }: { searchParams: P
     completed: deliveries.filter((d: any) => d.status === "completed").length,
   };
 
-  const canCreateReturn = ["workshop", "warehouse_manager", "storekeeper", "mine_xsc"].includes(profile.role);
+  const canCreateReturn = ["storekeeper", "mine_xsc"].includes(profile.role);
 
   return <div className="grid gap-5">
     <div className="flex flex-wrap items-end justify-between gap-3">
       <div>
         <h1 className="font-display m-0 text-2xl text-[var(--brand-deep)]">Giao nhận NCC</h1>
-        <p className="mt-1 text-sm text-[var(--muted-foreground)]">1 Phiếu giao = 1 chuyến = 1 cước. XSC xác nhận thực nhận → PHC hoàn tất; trả vỏ cùng chuyến không tính thêm cước.</p>
+        <p className="mt-1 text-sm text-[var(--muted-foreground)]">1 Phiếu giao = 1 chuyến = 1 cước. Một chuyến có thể giao Nhà máy, Mỏ hoặc cả hai; có giao Mỏ thì áp dụng cước Mỏ. Trả vỏ cùng chuyến không tính thêm cước.</p>
       </div>
       <div className="flex rounded-xl border border-[var(--border)] bg-white p-1">
         <Link href="/deliveries?tab=deliveries" className={`rounded-lg px-4 py-2 text-sm font-bold ${tab === "deliveries" ? "bg-[var(--brand)] text-white" : "text-[var(--muted-foreground)]"}`}>Phiếu giao</Link>
@@ -146,11 +146,15 @@ export default async function DeliveriesPage({ searchParams }: { searchParams: P
           const locationsLabel = Array.from(new Set((d.items || []).map((i: any) => i.location_code === "MINE" ? "Mỏ Tà Thiết" : "Nhà máy"))).join(" + ");
           const phcReady = d.status === "phc_pending" || (itemCount > 0 && xscDone === itemCount);
           const isAction = deliveryNeedsAction(profile, d);
-          const deliveryLocation = d.items?.[0];
-          const linkedReturn = (returns as any[]).find((r: any) => r.trip_id === d.trip_id && r.status !== "cancelled");
+          const deliveryHasPlant = (d.items || []).some((i: any) => i.location_code === "PLANT");
+          const deliveryHasMine = (d.items || []).some((i: any) => i.location_code === "MINE");
+          const tripReturns = (returns as any[]).filter((r: any) => r.trip_id === d.trip_id && r.status !== "cancelled");
+          const ownReturnLocationCode = profile.role === "storekeeper" ? "PLANT" : profile.role === "mine_xsc" ? "MINE" : null;
+          const ownReturnLocationName = ownReturnLocationCode === "PLANT" ? "Nhà máy Xi măng Bình Phước" : ownReturnLocationCode === "MINE" ? "Mỏ Tà Thiết" : "";
+          const ownLinkedReturn = ownReturnLocationCode ? tripReturns.find((r: any) => r.source_location_code === ownReturnLocationCode) : null;
           const canReturnThisDelivery = canCreateReturn && d.status !== "cancelled" && (
-            (deliveryLocation?.location_code === "MINE" && profile.role === "mine_xsc") ||
-            (deliveryLocation?.location_code === "PLANT" && ["workshop", "warehouse_manager", "storekeeper"].includes(profile.role))
+            (ownReturnLocationCode === "PLANT" && deliveryHasPlant) ||
+            (ownReturnLocationCode === "MINE" && deliveryHasMine)
           );
 
           return <details key={d.id} open={focusId ? d.id === focusId : d.id === firstActionId} className={`group overflow-hidden rounded-xl border bg-white ${isAction ? "border-[#8CB9E5] shadow-sm" : "border-[var(--border)]"}`}>
@@ -212,10 +216,14 @@ export default async function DeliveriesPage({ searchParams }: { searchParams: P
 
                   <div className="mt-4 border-t border-[var(--border)] pt-4">
                     <div className="flex items-center justify-between gap-2"><strong className="text-sm text-[var(--brand-deep)]">Trả vỏ cùng chuyến</strong><span className="rounded-full bg-green-50 px-2 py-1 text-[11px] font-bold text-[var(--success)]">+0 đ cước</span></div>
-                    {linkedReturn ? <div className="mt-2 rounded-xl border border-green-100 bg-green-50 p-3 text-sm">
-                      <div className="flex flex-wrap justify-between gap-2"><strong>{linkedReturn.return_code}</strong><DeliveryBadge status={linkedReturn.status}/></div>
-                      <div className="mt-2 grid gap-1">{(linkedReturn.items || []).map((i: any) => <div key={i.id} className="flex justify-between gap-3"><span>{i.product_name}</span><strong className="font-mono-data">{formatNumber(i.declared_qty)} {i.unit}</strong></div>)}</div>
-                    </div> : canReturnThisDelivery ? <details className="mt-2"><summary className="cursor-pointer rounded-xl bg-[var(--brand)] px-4 py-3 text-center text-sm font-bold text-white">Trả vỏ cùng chuyến</summary><div className="mt-3"><SupplierReturnForm products={products as any} deliveryId={d.id} deliveryCode={d.delivery_code} locationName={deliveryLocation?.location_name || locationsLabel}/></div></details> : <p className="mb-0 mt-2 text-xs text-[var(--muted-foreground)]">Phiếu trả vỏ chỉ do đơn vị tại đúng địa điểm giao thực hiện. NCC chỉ xem và phản hồi khi có sai lệch.</p>}
+                    {tripReturns.length ? <div className="mt-2 grid gap-2">
+                      {tripReturns.map((ret: any) => <div key={ret.id} className="rounded-xl border border-green-100 bg-green-50 p-3 text-sm">
+                        <div className="flex flex-wrap justify-between gap-2"><div><strong>{ret.return_code}</strong><div className="mt-1 text-xs text-[var(--muted-foreground)]">{ret.source_location}</div></div><DeliveryBadge status={ret.status}/></div>
+                        <div className="mt-2 grid gap-1">{(ret.items || []).map((i: any) => <div key={i.id} className="flex justify-between gap-3"><span>{i.product_name}</span><strong className="font-mono-data">{formatNumber(i.declared_qty)} {i.unit}</strong></div>)}</div>
+                      </div>)}
+                    </div> : null}
+                    {canReturnThisDelivery && !ownLinkedReturn ? <details className="mt-2"><summary className="cursor-pointer rounded-xl bg-[var(--brand)] px-4 py-3 text-center text-sm font-bold text-white">Trả vỏ tại {ownReturnLocationCode === "PLANT" ? "Nhà máy" : "Mỏ Tà Thiết"}</summary><div className="mt-3"><SupplierReturnForm products={products as any} deliveryId={d.id} deliveryCode={d.delivery_code} locationName={ownReturnLocationName}/></div></details> : null}
+                    {!canReturnThisDelivery && !tripReturns.length ? <p className="mb-0 mt-2 text-xs text-[var(--muted-foreground)]">Thủ kho chỉ được trả vỏ tại Nhà máy; XSC Mỏ chỉ được trả vỏ tại Mỏ. Nút chỉ xuất hiện khi chuyến có giao tại đúng địa điểm của user.</p> : null}
                   </div>
                 </section>
               </div>
@@ -227,7 +235,7 @@ export default async function DeliveriesPage({ searchParams }: { searchParams: P
     </> : <>
       <Card className="border-blue-100 bg-blue-50">
         <CardTitle>Phiếu trả vỏ chỉ tạo từ Phiếu giao</CardTitle>
-        <p className="mb-0 mt-2 text-sm text-[var(--muted-foreground)]">Không có chuyến riêng đi lấy vỏ. Vào tab Phiếu giao → mở đúng chuyến → bấm <strong>Trả vỏ cùng chuyến</strong>. Hệ thống tự lấy ngày, NCC, địa điểm và cước; người dùng chỉ nhập loại vỏ + số lượng.</p>
+        <p className="mb-0 mt-2 text-sm text-[var(--muted-foreground)]">Không có chuyến riêng đi lấy vỏ. Một chuyến có thể giao cả Nhà máy và Mỏ. Thủ kho chỉ tạo trả vỏ tại Nhà máy; XSC Mỏ chỉ tạo trả vỏ tại Mỏ. Mỗi bên chỉ nhập loại vỏ + số lượng và đều dùng chung cước của Phiếu giao.</p>
       </Card>
       <Card className="overflow-hidden p-0"><div className="border-b border-[var(--border)] p-4 md:p-5"><CardTitle>Lịch sử trả vỏ NCC</CardTitle></div><div className="grid gap-3 p-3 md:p-5">
         {returns.map((r: any) => <article key={r.id} className="rounded-xl border border-[var(--border)] bg-white p-4"><div className="flex flex-wrap justify-between gap-3"><div><div className="font-mono-data font-bold text-[var(--brand)]">{r.return_code}</div><div className="mt-1 text-sm font-bold">{r.source_location} · {dateVN(r.return_date)}</div><div className="mt-1 text-xs text-[var(--muted-foreground)]">Cùng Phiếu giao {r.delivery_code || "—"} · Không phát sinh thêm cước</div></div><DeliveryBadge status={r.status} /></div>

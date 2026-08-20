@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowLeftRight, ChevronDown, Minus, Plus, Send, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowLeftRight, ChevronDown, MapPin, Minus, Plus, Send, Trash2, Warehouse, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -11,90 +11,88 @@ type Product = { id: string; code: string; name: string; unit: string };
 type Location = { id: string; code: string; name: string };
 type Line = { key: string; productId: string; quantity: number };
 
+type Zone = "PLANT" | "MINE";
+
 export function DeliveryCreateForm({ products, locations, today }: { products: Product[]; locations: Location[]; today: string }) {
-  const [destinationLocationId, setDestinationLocationId] = useState(locations[0]?.id || "");
-  const [lines, setLines] = useState<Line[]>([
-    { key: crypto.randomUUID(), productId: products[0]?.id || "", quantity: 1 },
-  ]);
-  const payload = useMemo(
-    () => lines.map(({ productId, quantity }) => ({ productId, destinationLocationId, quantity })),
-    [lines, destinationLocationId],
-  );
-  const selectedLocation = locations.find((l) => l.id === destinationLocationId);
+  const plant = locations.find((l) => l.code === "PLANT");
+  const mine = locations.find((l) => l.code === "MINE");
+  const [plantLines, setPlantLines] = useState<Line[]>([]);
+  const [mineLines, setMineLines] = useState<Line[]>([]);
 
-  return (
-    <form action="/api/deliveries" method="post" className="grid gap-4">
-      <input type="hidden" name="action" value="create_delivery" />
-      <input type="hidden" name="lines" value={JSON.stringify(payload)} />
+  const payload = useMemo(() => [
+    ...plantLines.map(({ productId, quantity }) => ({ productId, destinationLocationId: plant?.id || "", quantity })),
+    ...mineLines.map(({ productId, quantity }) => ({ productId, destinationLocationId: mine?.id || "", quantity })),
+  ], [plantLines, mineLines, plant?.id, mine?.id]);
 
-      <div className="grid gap-3 md:grid-cols-3">
-        <FormField label="Ngày giao">
-          <Input name="delivery_date" type="date" defaultValue={today} required />
-        </FormField>
-        <FormField label="Địa điểm giao" hint="1 phiếu giao = 1 chuyến = 1 cước">
-          <Select value={destinationLocationId} onChange={(e) => setDestinationLocationId(e.target.value)} required>
-            {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-          </Select>
-        </FormField>
-        <FormField label="Ghi chú" hint="Không bắt buộc">
-          <Input name="note" placeholder="Có thể để trống" />
-        </FormField>
+  const hasPlant = plantLines.some((x) => x.productId && x.quantity > 0);
+  const hasMine = mineLines.some((x) => x.productId && x.quantity > 0);
+  const tripLabel = hasMine ? (hasPlant ? "Nhà máy + Mỏ Tà Thiết" : "Mỏ Tà Thiết") : hasPlant ? "Nhà máy" : "Chưa có dữ liệu giao";
+  const feeLabel = hasMine ? "Chuyến này tính 1 cước Mỏ Tà Thiết" : hasPlant ? "Chuyến này tính 1 cước Nhà máy" : "Thêm ít nhất một loại khí ở Nhà máy hoặc Mỏ";
+
+  function linesFor(zone: Zone) { return zone === "PLANT" ? plantLines : mineLines; }
+  function setterFor(zone: Zone) { return zone === "PLANT" ? setPlantLines : setMineLines; }
+  function addLine(zone: Zone) {
+    const current = linesFor(zone);
+    const next = products.find((p) => !current.some((x) => x.productId === p.id));
+    if (!next) return;
+    setterFor(zone)((old) => [...old, { key: crypto.randomUUID(), productId: next.id, quantity: 1 }]);
+  }
+  function updateLine(zone: Zone, key: string, patch: Partial<Line>) {
+    setterFor(zone)((old) => old.map((x) => x.key === key ? { ...x, ...patch } : x));
+  }
+  function removeLine(zone: Zone, key: string) {
+    setterFor(zone)((old) => old.filter((x) => x.key !== key));
+  }
+
+  function ZoneCard({ zone, title, hint }: { zone: Zone; title: string; hint: string }) {
+    const current = linesFor(zone);
+    const icon = zone === "PLANT" ? <Warehouse size={19}/> : <MapPin size={19}/>;
+    return <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-white">
+      <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--paper)] px-4 py-3">
+        <div className="flex items-center gap-3"><span className="grid size-9 place-items-center rounded-xl bg-blue-50 text-[var(--brand)]">{icon}</span><div><div className="font-extrabold text-[var(--brand-deep)]">{title}</div><div className="text-xs text-[var(--muted-foreground)]">{hint}</div></div></div>
+        <span className="rounded-full bg-white px-2.5 py-1 text-xs font-bold text-[var(--muted-foreground)]">{current.length} loại</span>
       </div>
 
-      <div className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs font-semibold text-[var(--brand-deep)]">
-        {selectedLocation?.code === "MINE" ? "Phiếu này tính 1 cước Mỏ Tà Thiết." : "Phiếu này tính 1 cước Nhà máy."} Trả vỏ cùng chuyến sẽ không phát sinh thêm cước.
-      </div>
+      <div className="grid gap-2 p-3">
+        {current.map((line, index) => <div key={line.key} className="grid gap-2 rounded-xl border border-[var(--border)] p-3 md:grid-cols-[1fr_150px_42px] md:items-end">
+          <FormField label={index === 0 ? "Loại khí / sản phẩm" : `Loại khí ${index + 1}`}>
+            <Select value={line.productId} onChange={(e) => updateLine(zone, line.key, { productId: e.target.value })}>
+              {products.filter((product) => product.id === line.productId || !current.some((x) => x.productId === product.id)).map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
+            </Select>
+          </FormField>
+          <FormField label="Số lượng">
+            <Input type="number" min="0.001" step="0.001" value={line.quantity} onChange={(e) => updateLine(zone, line.key, { quantity: Number(e.target.value) })}/>
+          </FormField>
+          <Button type="button" variant="ghost" aria-label="Xóa dòng" title="Xóa dòng" onClick={() => removeLine(zone, line.key)}><Trash2 size={17}/></Button>
+        </div>)}
 
-      <div className="grid gap-2">
-        {lines.map((line, index) => (
-          <div key={line.key} className="grid gap-2 rounded-xl border border-[var(--border)] bg-white p-3 md:grid-cols-[1fr_150px_42px] md:items-end">
-            <FormField label={index === 0 ? "Loại khí / sản phẩm" : `Loại khí ${index + 1}`}>
-              <Select
-                value={line.productId}
-                onChange={(e) => setLines((old) => old.map((x) => (x.key === line.key ? { ...x, productId: e.target.value } : x)))}
-              >
-                {products.filter((p) => p.id === line.productId || !lines.some((x) => x.productId === p.id)).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </Select>
-            </FormField>
-            <FormField label="Số lượng">
-              <Input
-                type="number"
-                min="0.001"
-                step="0.001"
-                value={line.quantity}
-                onChange={(e) => setLines((old) => old.map((x) => (x.key === line.key ? { ...x, quantity: Number(e.target.value) } : x)))}
-              />
-            </FormField>
-            <Button
-              type="button"
-              variant="ghost"
-              aria-label="Xóa dòng"
-              title="Xóa dòng"
-              onClick={() => setLines((old) => (old.length === 1 ? old : old.filter((x) => x.key !== line.key)))}
-            >
-              <Trash2 size={17} />
-            </Button>
-          </div>
-        ))}
+        {!current.length ? <div className="rounded-xl border border-dashed border-[var(--border)] p-4 text-center text-sm text-[var(--muted-foreground)]">Không giao tại khu vực này thì để trống.</div> : null}
+        <Button type="button" variant="secondary" disabled={current.length >= products.length} onClick={() => addLine(zone)} className="justify-center"><Plus size={17}/> Thêm loại khí</Button>
       </div>
+    </section>;
+  }
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          variant="secondary"
-          disabled={lines.length >= products.length}
-          onClick={() => {
-            const next = products.find((p) => !lines.some((x) => x.productId === p.id));
-            if (!next) return;
-            setLines((old) => [...old, { key: crypto.randomUUID(), productId: next.id, quantity: 1 }]);
-          }}
-        >
-          <Plus size={17} /> Thêm loại khí
-        </Button>
-        <Button type="submit" className="ml-auto min-w-[160px]"><Send size={17}/> Tạo phiếu giao</Button>
-      </div>
-    </form>
-  );
+  return <form action="/api/deliveries" method="post" className="grid gap-4">
+    <input type="hidden" name="action" value="create_delivery" />
+    <input type="hidden" name="lines" value={JSON.stringify(payload)} />
+
+    <div className="grid gap-3 md:grid-cols-[220px_1fr]">
+      <FormField label="Ngày giao"><Input name="delivery_date" type="date" defaultValue={today} required /></FormField>
+      <FormField label="Ghi chú" hint="Không bắt buộc"><Input name="note" placeholder="Có thể để trống" /></FormField>
+    </div>
+
+    <div className="grid gap-3 xl:grid-cols-2">
+      <ZoneCard zone="PLANT" title="Giao Nhà máy" hint="Nhập các loại khí giao tại Nhà máy Xi măng Bình Phước" />
+      <ZoneCard zone="MINE" title="Giao Mỏ Tà Thiết" hint="Nhập các loại khí giao tại Mỏ; nếu có số liệu Mỏ thì cả chuyến áp dụng cước Mỏ" />
+    </div>
+
+    <div className={`rounded-xl border px-4 py-3 text-sm ${hasMine ? "border-orange-200 bg-orange-50" : "border-blue-100 bg-blue-50"}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-bold text-[var(--muted-foreground)]">Tuyến chuyến</span><strong className="text-[var(--brand-deep)]">{tripLabel}</strong></div>
+      <div className="mt-1 text-xs font-semibold text-[var(--muted-foreground)]">{feeLabel}. 1 Phiếu giao = 1 chuyến = 1 cước; trả vỏ cùng chuyến không phát sinh thêm cước.</div>
+    </div>
+
+    <div className="flex justify-end"><Button type="submit" disabled={!hasPlant && !hasMine} className="min-w-[180px]"><Send size={17}/> Tạo phiếu giao</Button></div>
+  </form>;
 }
 
 type TransferProduct = { id: string; code: string; name: string; unit: string };

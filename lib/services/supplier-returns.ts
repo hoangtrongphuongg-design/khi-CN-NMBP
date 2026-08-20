@@ -50,8 +50,8 @@ export async function createSupplierReturn(profile: Profile, input: {
   lines: { productId: string; quantity: number }[];
   note?: string;
 }) {
-  if (!["workshop", "warehouse_manager", "storekeeper", "mine_xsc"].includes(profile.role)) {
-    throw new Error("Không có quyền trả vỏ NCC");
+  if (!["storekeeper", "mine_xsc"].includes(profile.role)) {
+    throw new Error("Chỉ Thủ kho Nhà máy hoặc XSC Mỏ được tạo trả vỏ cùng chuyến");
   }
   const lines = input.lines.filter((x) => x.productId && Number(x.quantity) > 0);
   if (!lines.length) throw new Error("Phiếu trả phải có ít nhất một loại vỏ");
@@ -68,17 +68,20 @@ export async function createSupplierReturn(profile: Profile, input: {
     if (!delivery.trip_id) throw new Error("Phiếu giao chưa có chuyến vận chuyển");
     if (delivery.status === "cancelled") throw new Error("Phiếu giao đã hủy, không thể trả vỏ cùng chuyến");
 
-    const locations = await tx`
+    const allowedLocationCode = profile.role === "mine_xsc" ? "MINE" : "PLANT";
+    const [loc] = await tx`
       SELECT DISTINCT l.id,l.code,l.name
       FROM supplier_delivery_items di
       JOIN locations l ON l.id=di.destination_location_id
       WHERE di.delivery_id=${delivery.id}::uuid
+        AND l.code=${allowedLocationCode}
+      LIMIT 1
     `;
-    if (locations.length !== 1) throw new Error("Phiếu giao cũ có nhiều địa điểm; không thể dùng quy trình trả vỏ cùng chuyến mới");
-    const loc = locations[0] as any;
-
-    if (loc.code === "MINE" && profile.role !== "mine_xsc") throw new Error("Phiếu trả vỏ tại Mỏ chỉ do XSC Mỏ thực hiện");
-    if (loc.code === "PLANT" && profile.role === "mine_xsc") throw new Error("XSC Mỏ không trả vỏ cho Phiếu giao Nhà máy");
+    if (!loc) {
+      throw new Error(allowedLocationCode === "MINE"
+        ? "Chuyến này không có giao tại Mỏ Tà Thiết nên XSC Mỏ không được tạo trả vỏ"
+        : "Chuyến này không có giao tại Nhà máy nên Thủ kho không được tạo trả vỏ");
+    }
 
     const [existing] = await tx`
       SELECT id,return_code FROM supplier_returns
