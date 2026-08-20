@@ -7,7 +7,7 @@ function stamp(prefix: string, id: string, date: string) {
   return `${prefix}-${date.replaceAll("-", "")}-${id.slice(0, 6).toUpperCase()}`;
 }
 
-export async function allocateXL45Return(tx: any, supplierReturnItemId: string, productId: string, locationId: string, returnDate: string, quantity: number) {
+async function allocateXL45Return(tx: any, supplierReturnItemId: string, productId: string, locationId: string, returnDate: string, quantity: number) {
   let remaining = quantity;
   const lots = await tx`
     SELECT id,delivered_date,qty_outstanding::float8 AS qty_outstanding
@@ -38,21 +38,6 @@ export async function allocateXL45Return(tx: any, supplierReturnItemId: string, 
     remaining -= take;
   }
   if (remaining > 0.000001) throw new Error("Số bồn XL-45 trả vượt số bồn đang lưu theo lịch sử giao nhận");
-}
-
-
-export async function reallocateXL45Return(tx: any, supplierReturnItemId: string, productId: string, locationId: string, returnDate: string, quantity: number) {
-  const allocations = await tx`
-    SELECT id,xl45_lot_id,quantity::float8 AS quantity
-    FROM xl45_return_allocations
-    WHERE supplier_return_item_id=${supplierReturnItemId}::uuid
-    FOR UPDATE
-  `;
-  for (const row of allocations as any[]) {
-    await tx`UPDATE xl45_lots SET qty_outstanding=qty_outstanding+${Number(row.quantity)} WHERE id=${row.xl45_lot_id}::uuid`;
-  }
-  await tx`DELETE FROM xl45_return_allocations WHERE supplier_return_item_id=${supplierReturnItemId}::uuid`;
-  if (quantity > 0) await allocateXL45Return(tx, supplierReturnItemId, productId, locationId, returnDate, quantity);
 }
 
 /**
@@ -276,8 +261,6 @@ export async function listSupplierReturns(profile: Profile) {
     return sql`
       SELECT r.id,r.return_code,r.return_date,r.status,r.note,r.trip_id,l.name AS source_location,l.code AS source_location_code,t.trip_code,
         d.delivery_code,
-        (SELECT cr.status FROM data_correction_requests cr WHERE cr.target_type='supplier_return' AND cr.target_id=r.id ORDER BY cr.requested_at DESC LIMIT 1) AS correction_status,
-        (SELECT cr.request_code FROM data_correction_requests cr WHERE cr.target_type='supplier_return' AND cr.target_id=r.id ORDER BY cr.requested_at DESC LIMIT 1) AS correction_request_code,
         COALESCE(json_agg(json_build_object(
           'id',ri.id,'product_id',ri.product_id,'product_name',p.name,'unit',p.unit,
           'declared_qty',ri.declared_qty,'confirmed_qty',ri.confirmed_qty,'status',ri.status,'feedback',ri.feedback
@@ -300,8 +283,6 @@ export async function listSupplierReturns(profile: Profile) {
   return sql`
     SELECT r.id,r.return_code,r.return_date,r.status,r.note,r.trip_id,l.name AS source_location,l.code AS source_location_code,t.trip_code,
       d.delivery_code,
-      (SELECT cr.status FROM data_correction_requests cr WHERE cr.target_type='supplier_return' AND cr.target_id=r.id ORDER BY cr.requested_at DESC LIMIT 1) AS correction_status,
-      (SELECT cr.request_code FROM data_correction_requests cr WHERE cr.target_type='supplier_return' AND cr.target_id=r.id ORDER BY cr.requested_at DESC LIMIT 1) AS correction_request_code,
       COALESCE(json_agg(json_build_object(
         'id',ri.id,'product_id',ri.product_id,'product_name',p.name,'unit',p.unit,
         'declared_qty',ri.declared_qty,'confirmed_qty',ri.confirmed_qty,'status',ri.status,'feedback',ri.feedback

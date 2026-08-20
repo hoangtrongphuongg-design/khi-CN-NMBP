@@ -7,27 +7,26 @@ import { FormField } from "@/components/ui/form-field";
 import { Badge } from "@/components/ui/badge";
 import { requireRole } from "@/lib/auth/current-user";
 import { getGroups, getLocations, getProducts } from "@/lib/services/catalog";
-import { listAuditLogs, listCalendarExceptions, listDataCorrectionRequests, listPriceRules, listThresholds, listUsers } from "@/lib/services/admin";
+import { listAuditLogs, listCalendarExceptions, listPriceRules, listThresholds, listUsers } from "@/lib/services/admin";
 import { sql } from "@/lib/db";
 import { ROLE_LABELS } from "@/lib/auth/permissions";
 import type { AppRole } from "@/types/app";
-import { formatCurrency, formatNumber, toDateInput, toDateKey } from "@/lib/utils";
+import { formatCurrency, formatNumber, toDateInput } from "@/lib/utils";
 
 const tabs = [
-  ["users","Tài khoản"],["thresholds","Ngưỡng tồn"],["calendar","Ngày nghỉ"],["prices","Đơn giá"],["master","Danh mục"],["corrections","Đề nghị sửa"],["audit","Lịch sử"]
+  ["users","Tài khoản"],["thresholds","Ngưỡng tồn"],["calendar","Ngày nghỉ"],["prices","Đơn giá"],["master","Danh mục"],["audit","Lịch sử"]
 ] as const;
 
 export default async function AdminPage({ searchParams }: { searchParams: Promise<{ tab?: string; error?: string; ok?: string; edit_user?: string }> }) {
-  const profile = await requireRole(["admin"]);
+  await requireRole(["admin"]);
   const p = await searchParams;
   const tab = p.tab || "users";
-  const [users, thresholds, exceptions, prices, groups, locations, products, orgs, contracts, stockPoints, norms, correctionRequests, auditLogs] = await Promise.all([
+  const [users, thresholds, exceptions, prices, groups, locations, products, orgs, contracts, stockPoints, norms, auditLogs] = await Promise.all([
     listUsers(),listThresholds(),listCalendarExceptions(),listPriceRules(),getGroups(),getLocations(),getProducts(),
     sql`SELECT id,code,name,kind FROM organizations WHERE active=true ORDER BY kind,name`,
     sql`SELECT id,contract_no,valid_from,valid_to FROM contracts ORDER BY valid_from DESC`,
     sql`SELECT id,code,name,kind FROM stock_points WHERE active=true AND kind<>'transit' ORDER BY kind,name`,
     sql`SELECT gn.group_id,gn.product_id,gn.norm_qty::float8 AS norm_qty,g.name AS group_name,p.name AS product_name FROM group_norms gn JOIN work_groups g ON g.id=gn.group_id JOIN products p ON p.id=gn.product_id ORDER BY g.name,p.display_order`,
-    listDataCorrectionRequests(profile),
     listAuditLogs(),
   ]);
   const editUser = p.edit_user ? users.find((u:any)=>String(u.id)===String(p.edit_user)) : null;
@@ -35,7 +34,6 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
     <div><h1 className="font-display m-0 text-2xl text-[var(--brand-deep)]">Quản trị hệ thống</h1><p className="mt-1 text-sm text-[var(--muted-foreground)]">Tài khoản, ngưỡng cảnh báo, lịch ngoại lệ và đơn giá có hiệu lực theo thời gian.</p></div>
     <div className="flex flex-wrap gap-2">{tabs.map(([key,label])=><Link key={key} href={`/admin?tab=${key}`} className={`rounded-lg border px-3 py-2 text-sm font-bold ${tab===key?"border-[var(--brand)] bg-[var(--brand)] text-white":"border-[var(--border)] bg-white"}`}>{label}</Link>)}</div>
     {p.error ? <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-bold text-[#B91C1C]">{p.error}</div> : null}
-    {p.ok ? <div role="status" className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm font-bold text-[#15803D]">{p.ok === "1" ? "Đã lưu thay đổi." : p.ok}</div> : null}
 
     {tab === "users" ? <div className="grid gap-4"><Card><CardTitle>Tạo user</CardTitle><form action="/api/admin/users" method="post" className="mt-4 grid gap-3 md:grid-cols-3"><input type="hidden" name="action" value="create"/>
       <FormField label="Mã danh bộ / Username"><Input name="username" required/></FormField><FormField label="Họ tên"><Input name="full_name" required/></FormField><FormField label="Mật khẩu tạm"><Input name="password" type="password" minLength={6} required/></FormField>
@@ -55,68 +53,6 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
     {tab === "prices" ? <div className="grid gap-4"><Card><CardTitle>Cập nhật đơn giá</CardTitle><p className="text-sm text-[var(--muted-foreground)]">Nhập thủ công đơn giá mới và ngày bắt đầu hiệu lực. Hệ thống giữ nguyên lịch sử giá cũ để đối soát.</p><form action="/api/admin/prices" method="post" className="mt-4 grid gap-3 md:grid-cols-3"><FormField label="Loại giá"><Select name="price_type"><option value="product">Hàng hóa</option><option value="trip_plant">Chuyến Nhà máy</option><option value="trip_mine">Chuyến Mỏ</option><option value="trip_co2_liquid">Chuyến CO₂ lỏng</option><option value="cylinder_rental_day">Thuê vỏ/ngày</option><option value="xl45_rental_day">Thuê XL-45/ngày</option></Select></FormField><FormField label="Sản phẩm" hint="Chỉ chọn khi loại giá = Hàng hóa"><Select name="product_id"><option value="">Không áp dụng</option>{products.map((p:any)=><option key={p.id} value={p.id}>{p.name}</option>)}</Select></FormField><FormField label="Đơn vị"><Input name="unit" required/></FormField><FormField label="Đơn giá"><Input name="unit_price" type="number" min="0" step="1" required/></FormField><FormField label="Hiệu lực từ"><Input name="effective_from" type="date" defaultValue={toDateInput()} required/></FormField><FormField label="Hợp đồng"><Select name="contract_id"><option value="">Không gắn</option>{contracts.map((c:any)=><option key={c.id} value={c.id}>{c.contract_no}</option>)}</Select></FormField><div className="md:col-span-2"><FormField label="Ghi chú"><Input name="note"/></FormField></div><div className="self-end"><Button type="submit">Tạo giá mới</Button></div></form></Card><Card className="overflow-hidden p-0"><div className="overflow-x-auto"><table className="mobile-card-table w-full text-sm"><thead className="bg-[var(--muted)]"><tr><th className="p-3 text-left">Hạng mục</th><th className="p-3 text-left">Đơn giá</th><th className="p-3 text-left">Hiệu lực</th><th className="p-3 text-left">Hợp đồng</th></tr></thead><tbody>{prices.map((r:any)=><tr key={r.id} className="border-t border-[var(--border)]"><td data-label="Hạng mục" className="p-3">{r.product_name || r.price_type}</td><td data-label="Đơn giá" className="p-3 font-mono-data">{formatCurrency(r.unit_price)} / {r.unit}</td><td data-label="Hiệu lực" className="p-3">{String(r.effective_from).slice(0,10)} → {r.effective_to?String(r.effective_to).slice(0,10):"hiện tại"}</td><td data-label="Hợp đồng" className="p-3">{r.contract_no || "—"}</td></tr>)}</tbody></table></div></Card></div> : null}
 
     {tab === "master" ? <div className="grid gap-4"><Card><CardTitle>Danh mục khí / sản phẩm</CardTitle><p className="text-sm text-[var(--muted-foreground)]">Admin có thể thêm loại mới mà không sửa code. Mã đã tồn tại sẽ được cập nhật thông tin.</p><form action="/api/admin/products" method="post" className="mt-4 grid gap-3 md:grid-cols-4"><FormField label="Mã"><Input name="code" placeholder="VD: O2" required/></FormField><FormField label="Tên"><Input name="name" required/></FormField><FormField label="Nhóm hàng"><Input name="category" placeholder="Khí công nghiệp" required/></FormField><FormField label="ĐVT"><Input name="unit" placeholder="chai / kg / bồn" required/></FormField><div className="md:col-span-2"><FormField label="Quy cách"><Input name="specification" placeholder="Không bắt buộc"/></FormField></div><label className="flex items-center gap-2 text-sm font-bold"><input type="checkbox" name="returnable_container"/> Có vỏ/bồn hoàn trả</label><label className="flex items-center gap-2 text-sm font-bold"><input type="checkbox" name="warehouse_split_full_empty"/> Kho tách đầy/rỗng</label><label className="flex items-center gap-2 text-sm font-bold"><input type="checkbox" name="internal_group_tracking"/> Theo dõi tại nhóm</label><label className="flex items-center gap-2 text-sm font-bold"><input type="checkbox" name="cylinder_rental_eligible"/> Tính thuê vỏ/ngày</label><div><Button type="submit">Lưu danh mục</Button></div></form></Card><Card><CardTitle>Thêm nhóm</CardTitle><form action="/api/admin/groups" method="post" className="mt-4 grid gap-3 md:grid-cols-4 md:items-end"><FormField label="Mã nhóm"><Input name="code" placeholder="VD: CBL-2" required/></FormField><FormField label="Tên nhóm"><Input name="name" required/></FormField><FormField label="Địa điểm"><Select name="location_id">{locations.map((l:any)=><option key={l.id} value={l.id}>{l.name}</option>)}</Select></FormField><Button type="submit">Thêm nhóm</Button></form></Card><Card><CardTitle>Thiết lập số dư đầu kỳ / điều chỉnh quản trị</CardTitle><p className="text-sm text-[var(--muted-foreground)]">Dùng khi khởi tạo hệ thống hoặc cần điều chỉnh có kiểm soát. Mọi thay đổi đều ghi audit log.</p><form action="/api/admin/stock" method="post" className="mt-4 grid gap-3 md:grid-cols-5 md:items-end"><FormField label="Điểm tồn"><Select name="stock_point_id">{stockPoints.map((sp:any)=><option key={sp.id} value={sp.id}>{sp.name}</option>)}</Select></FormField><FormField label="Loại khí"><Select name="product_id">{products.map((p:any)=><option key={p.id} value={p.id}>{p.name}</option>)}</Select></FormField><FormField label="Loại số lượng"><Select name="bucket"><option value="full">Kho - chai đầy</option><option value="empty">Kho - chai rỗng</option><option value="available">Kho - hàng theo kg/bồn</option><option value="managed">Nhóm - tổng đang quản lý</option></Select></FormField><FormField label="Số lượng mục tiêu"><Input name="qty" type="number" min="0" step="0.001" required/></FormField><Button type="submit">Ghi số dư</Button></form></Card><Card><CardTitle>Định mức từng nhóm</CardTitle><form action="/api/admin/norms" method="post" className="mt-4 grid gap-3 md:grid-cols-4 md:items-end"><FormField label="Nhóm"><Select name="group_id">{groups.map((g:any)=><option key={g.id} value={g.id}>{g.name}</option>)}</Select></FormField><FormField label="Loại khí"><Select name="product_id">{products.filter((p:any)=>p.internal_group_tracking).map((p:any)=><option key={p.id} value={p.id}>{p.name}</option>)}</Select></FormField><FormField label="Định mức"><Input name="norm_qty" type="number" min="0" step="1" required/></FormField><Button type="submit">Lưu định mức</Button></form><div className="mt-4 grid gap-1">{norms.map((n:any)=><div key={`${n.group_id}-${n.product_id}`} className="flex justify-between border-b py-2 text-sm"><span>{n.group_name} · {n.product_name}</span><strong className="font-mono-data">{formatNumber(n.norm_qty)}</strong></div>)}</div></Card><Card><CardTitle>Danh mục hiện có</CardTitle><div className="mt-4 grid gap-5 md:grid-cols-2"><div><h3>Nhóm</h3>{groups.map((g:any)=><div key={g.id} className="border-b py-2 text-sm"><strong>{g.name}</strong> · {g.location_name}</div>)}</div><div><h3>Loại khí/sản phẩm</h3>{products.map((p:any)=><div key={p.id} className="border-b py-2 text-sm"><strong>{p.name}</strong><div className="text-xs text-[var(--muted-foreground)]">{p.specification} · {p.unit}</div></div>)}</div></div></Card></div> : null}
-
-
-    {tab === "corrections" ? <div className="grid gap-4">
-      <Card className="border-amber-200 bg-amber-50">
-        <CardTitle>Đề nghị sửa dữ liệu giao nhận NCC</CardTitle>
-        <p className="mb-0 mt-2 text-sm text-[var(--muted-foreground)]">Workshop/Trưởng kho chỉ gửi đề nghị. Admin là người duy nhất được áp dụng số liệu đúng. Phiếu gốc không bị xóa; mọi chênh lệch tồn, chi phí và lịch sử đều được ghi bằng bút toán điều chỉnh.</p>
-      </Card>
-      {correctionRequests.map((r:any) => {
-        const pending = r.status === "pending";
-        const allowedLocations = locations.filter((l:any) => r.target_type !== "supplier_delivery" || (l.code === "PLANT" && r.visits_plant) || (l.code === "MINE" && r.visits_mine));
-        const availableProducts = r.target_type === "supplier_return" ? products.filter((x:any)=>x.returnable_container) : products;
-        return <Card key={r.id} className={pending ? "border-amber-200" : ""}>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <div className="font-mono-data text-sm font-extrabold text-[var(--brand)]">{r.request_code}</div>
-              <div className="mt-1 text-lg font-extrabold text-[var(--brand-deep)]">{r.target_type === "supplier_delivery" ? "Phiếu giao" : "Phiếu trả vỏ"} · {r.target_code || "—"}</div>
-              <div className="mt-1 text-xs text-[var(--muted-foreground)]">Ngày nghiệp vụ {r.target_date ? toDateKey(r.target_date).split("-").reverse().join("/") : "—"} · Đề nghị bởi {r.requested_by_name || "—"} · {new Date(r.requested_at).toLocaleString("vi-VN",{timeZone:"Asia/Ho_Chi_Minh"})}</div>
-            </div>
-            <Badge tone={r.status === "pending" ? "warning" : r.status === "completed" ? "success" : "neutral"}>{r.status === "pending" ? "Chờ Admin xử lý" : r.status === "completed" ? "Đã sửa" : "Đã từ chối"}</Badge>
-          </div>
-          <div className="mt-4 grid gap-2 rounded-xl bg-[var(--paper)] p-3 text-sm">
-            <div><strong>Lý do:</strong> {r.reason}</div>
-            <div><strong>Số liệu đề nghị đúng:</strong> {r.requested_change}</div>
-            {r.admin_note ? <div><strong>Admin:</strong> {r.admin_note}</div> : null}
-          </div>
-          {pending ? <>
-            <form action="/api/admin/stock" method="post" className="mt-4 grid gap-4">
-              <input type="hidden" name="action" value="apply_data_correction"/>
-              <input type="hidden" name="request_id" value={r.id}/>
-              <div>
-                <div className="mb-2 text-sm font-extrabold text-[var(--brand-deep)]">Số lượng đúng của các dòng hiện có</div>
-                <div className="grid gap-2">
-                  {(r.items || []).map((item:any)=><div key={item.item_id} className="grid gap-2 rounded-xl border border-[var(--border)] bg-white p-3 md:grid-cols-[1fr_180px] md:items-end">
-                    <div><strong>{item.product_name}</strong>{item.location_name ? <div className="mt-1 text-xs text-[var(--muted-foreground)]">{item.location_name}{item.declared_qty != null ? ` · Ban đầu ${formatNumber(item.declared_qty)} ${item.unit}` : ""}</div> : null}</div>
-                    <FormField label="Số lượng đúng"><Input name={`qty_${item.item_id}`} type="number" min="0" step="0.001" defaultValue={Number(item.quantity ?? 0)} required/></FormField>
-                  </div>)}
-                </div>
-              </div>
-              <div>
-                <div className="mb-2 text-sm font-extrabold text-[var(--brand-deep)]">Bổ sung loại còn thiếu <span className="font-normal text-[var(--muted-foreground)]">(không bắt buộc, tối đa 3 dòng/lần)</span></div>
-                <div className="grid gap-2">
-                  {[1,2,3].map((idx)=><div key={idx} className={`grid gap-2 rounded-xl border border-dashed border-[var(--border)] p-3 ${r.target_type === "supplier_delivery" ? "md:grid-cols-[1fr_1fr_160px]" : "md:grid-cols-[1fr_160px]"}`}>
-                    <FormField label={`Loại ${idx}`}><Select name={`new_product_${idx}`}><option value="">Không bổ sung</option>{availableProducts.map((x:any)=><option key={x.id} value={x.id}>{x.name}</option>)}</Select></FormField>
-                    {r.target_type === "supplier_delivery" ? <FormField label="Giao tại"><Select name={`new_location_${idx}`}><option value="">Chọn địa điểm</option>{allowedLocations.map((l:any)=><option key={l.id} value={l.id}>{l.name}</option>)}</Select></FormField> : null}
-                    <FormField label="Số lượng"><Input name={`new_qty_${idx}`} type="number" min="0" step="0.001" placeholder="Để trống nếu không dùng"/></FormField>
-                  </div>)}
-                </div>
-              </div>
-              <FormField label="Ghi chú xử lý của Admin" hint="Không bắt buộc khi đã rõ lý do"><Input name="admin_note" placeholder="VD: Đối chiếu phiếu giấy và xác nhận thực tế"/></FormField>
-              <div className="flex flex-wrap gap-2"><Button type="submit">Áp dụng số liệu đúng</Button></div>
-            </form>
-            <form action="/api/admin/stock" method="post" className="mt-3 grid gap-2 rounded-xl border border-[var(--border)] bg-white p-3 md:grid-cols-[1fr_auto] md:items-end">
-              <input type="hidden" name="action" value="reject_data_correction"/>
-              <input type="hidden" name="request_id" value={r.id}/>
-              <FormField label="Lý do từ chối"><Input name="admin_note" required placeholder="Nhập lý do nếu không chấp nhận đề nghị"/></FormField>
-              <Button type="submit" variant="secondary">Từ chối đề nghị</Button>
-            </form>
-          </> : <div className="mt-3 text-xs text-[var(--muted-foreground)]">Xử lý bởi {r.handled_by_name || "Admin"}{r.handled_at ? ` · ${new Date(r.handled_at).toLocaleString("vi-VN",{timeZone:"Asia/Ho_Chi_Minh"})}` : ""}</div>}
-        </Card>;
-      })}
-      {!correctionRequests.length ? <Card><p className="m-0 text-sm text-[var(--muted-foreground)]">Chưa có đề nghị sửa dữ liệu.</p></Card> : null}
-    </div> : null}
 
     {tab === "audit" ? <Card className="overflow-hidden p-0"><div className="border-b border-[var(--border)] p-4 md:p-5"><CardTitle>Lịch sử thao tác gần nhất</CardTitle><p className="mt-1 text-xs text-[var(--muted-foreground)]">Audit log chỉ xem, không sửa/xóa trên giao diện.</p></div><div className="overflow-x-auto"><table className="mobile-card-table w-full text-sm"><thead className="bg-[var(--muted)]"><tr><th className="p-3 text-left">Thời gian</th><th className="p-3 text-left">Người thao tác</th><th className="p-3 text-left">Hành động</th><th className="p-3 text-left">Đối tượng</th><th className="p-3 text-left">Ghi chú</th></tr></thead><tbody>{auditLogs.map((a:any)=><tr key={a.id} className="border-t border-[var(--border)]"><td data-label="Thời gian" className="p-3 font-mono-data text-xs">{new Date(a.created_at).toLocaleString("vi-VN",{timeZone:"Asia/Ho_Chi_Minh"})}</td><td data-label="Người thao tác" className="p-3"><strong>{a.actor_name || "Hệ thống"}</strong>{a.actor_username?<div className="font-mono-data text-xs">{a.actor_username}</div>:null}</td><td data-label="Hành động" className="p-3 font-mono-data">{a.action}</td><td data-label="Đối tượng" className="p-3">{a.entity_type}<div className="font-mono-data text-xs text-[var(--muted-foreground)]">{a.entity_id || "—"}</div></td><td data-label="Ghi chú" className="p-3">{a.note || "—"}</td></tr>)}</tbody></table></div></Card> : null}
   </div>;

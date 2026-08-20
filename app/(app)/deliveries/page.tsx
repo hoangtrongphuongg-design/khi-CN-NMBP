@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { DeliveryCreateForm } from "@/components/forms/delivery-create-form";
 import { SupplierReturnForm } from "@/components/forms/supplier-return-form";
 import { requireProfile } from "@/lib/auth/session";
-import { canConfirmMineDelivery, canConfirmPlantDelivery, canFeedbackDelivery, canFinalizePhcDelivery, canRequestDataCorrection } from "@/lib/auth/permissions";
+import { canConfirmMineDelivery, canConfirmPlantDelivery, canFeedbackDelivery, canFinalizePhcDelivery } from "@/lib/auth/permissions";
 import { getLocations, getProducts } from "@/lib/services/catalog";
 import { listDeliveries } from "@/lib/services/deliveries";
 import { listSupplierReturns } from "@/lib/services/supplier-returns";
@@ -214,20 +214,6 @@ export default async function DeliveriesPage({ searchParams }: { searchParams: P
                     canFinalizePhcDelivery(profile) ? <form action="/api/deliveries" method="post" className="mt-4"><input type="hidden" name="delivery_id" value={d.id}/><Button name="action" value="finalize_delivery_phc" className="w-full">PHC xác nhận hoàn tất</Button><p className="mb-0 mt-2 text-center text-[11px] text-[var(--muted-foreground)]">Xác nhận sẽ cập nhật tồn thực tế. Nếu thiếu đơn giá, phiếu vẫn hoàn tất và chờ Admin bổ sung giá sau.</p></form> : <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-[#92400E]">Đã đủ XSC xác nhận · Chờ PHC hoàn tất</div>
                   ) : <div className="mt-4 rounded-lg bg-[var(--paper)] p-3 text-sm text-[var(--muted-foreground)]">PHC sẽ được xác nhận sau khi tất cả dòng giao đã được XSC xác nhận.</div>}
 
-                  {d.status === "completed" && canRequestDataCorrection(profile) ? <div className="mt-4 border-t border-[var(--border)] pt-4">
-                    {d.correction_status === "pending" ? <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-[#92400E]">Đã gửi đề nghị sửa {d.correction_request_code || ""} · Chờ Admin xử lý</div> : <details>
-                      <summary className="cursor-pointer text-sm font-bold text-[var(--brand)]">Đề nghị sửa số liệu đã hoàn tất</summary>
-                      <form action="/api/deliveries" method="post" className="mt-3 grid gap-2">
-                        <input type="hidden" name="action" value="create_data_correction_request"/>
-                        <input type="hidden" name="target_type" value="supplier_delivery"/>
-                        <input type="hidden" name="target_id" value={d.id}/>
-                        <label className="grid gap-1 text-xs font-bold">Lý do<Input name="reason" required placeholder="VD: Xác nhận sai số lượng"/></label>
-                        <label className="grid gap-1 text-xs font-bold">Số liệu thực tế đúng / nội dung cần sửa<textarea name="requested_change" required rows={3} className="min-h-20 w-full rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-sm outline-none focus:border-[var(--brand)]" placeholder="VD: O₂ Nhà máy đúng 30 chai; thiếu CO₂ Mỏ 2 chai"/></label>
-                        <Button type="submit" variant="secondary">Gửi đề nghị cho Admin</Button>
-                      </form>
-                    </details>}
-                  </div> : null}
-
                   <div className="mt-4 border-t border-[var(--border)] pt-4">
                     <div className="flex items-center justify-between gap-2"><strong className="text-sm text-[var(--brand-deep)]">Trả vỏ cùng chuyến</strong><span className="rounded-full bg-green-50 px-2 py-1 text-[11px] font-bold text-[var(--success)]">+0 đ cước</span></div>
                     {tripReturns.length ? <div className="mt-2 grid gap-2">
@@ -253,8 +239,7 @@ export default async function DeliveriesPage({ searchParams }: { searchParams: P
       </Card>
       <Card className="overflow-hidden p-0"><div className="border-b border-[var(--border)] p-4 md:p-5"><CardTitle>Lịch sử trả vỏ NCC</CardTitle></div><div className="grid gap-3 p-3 md:p-5">
         {returns.map((r: any) => <article key={r.id} className="rounded-xl border border-[var(--border)] bg-white p-4"><div className="flex flex-wrap justify-between gap-3"><div><div className="font-mono-data font-bold text-[var(--brand)]">{r.return_code}</div><div className="mt-1 text-sm font-bold">{r.source_location} · {dateVN(r.return_date)}</div><div className="mt-1 text-xs text-[var(--muted-foreground)]">Cùng Phiếu giao {r.delivery_code || "—"} · Không phát sinh thêm cước</div></div><DeliveryBadge status={r.status} /></div>
-          <div className="mt-3 grid gap-2 text-sm">{(r.items || []).map((i: any) => <div key={i.id} className="rounded-lg bg-[var(--paper)] p-3"><div className="flex justify-between gap-3"><span>{i.product_name}</span><strong className="font-mono-data">{formatNumber(i.confirmed_qty ?? i.declared_qty)} {i.unit}</strong></div>{i.feedback ? <div className="mt-2 text-xs font-bold text-[var(--danger)]">Phản hồi NCC: {i.feedback}</div> : null}{profile.role === "supplier" && i.status !== "feedback" ? <form action="/api/deliveries" method="post" className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end"><input type="hidden" name="item_id" value={i.id}/><label className="grid gap-1 text-xs font-bold">Phản hồi nếu số liệu chưa đúng<Input name="feedback" required placeholder="Nhập nội dung sai lệch"/></label><Button name="action" value="feedback_supplier_return_item" variant="secondary">Phản hồi</Button></form> : null}</div>)}</div>
-          {canRequestDataCorrection(profile) ? <div className="mt-3 border-t border-[var(--border)] pt-3">{r.correction_status === "pending" ? <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-[#92400E]">Đã gửi đề nghị sửa {r.correction_request_code || ""} · Chờ Admin xử lý</div> : <details><summary className="cursor-pointer text-sm font-bold text-[var(--brand)]">Đề nghị sửa Phiếu trả vỏ</summary><form action="/api/deliveries" method="post" className="mt-3 grid gap-2"><input type="hidden" name="action" value="create_data_correction_request"/><input type="hidden" name="target_type" value="supplier_return"/><input type="hidden" name="target_id" value={r.id}/><label className="grid gap-1 text-xs font-bold">Lý do<Input name="reason" required placeholder="VD: Trả sai số lượng / thiếu loại vỏ"/></label><label className="grid gap-1 text-xs font-bold">Số liệu thực tế đúng / nội dung cần sửa<textarea name="requested_change" required rows={3} className="min-h-20 w-full rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-sm outline-none focus:border-[var(--brand)]" placeholder="VD: O₂ thực trả 28; CO₂ thực trả 5; thiếu N₂ 2 vỏ"/></label><Button type="submit" variant="secondary">Gửi đề nghị cho Admin</Button></form></details>}</div> : null}
+          <div className="mt-3 grid gap-2 text-sm">{(r.items || []).map((i: any) => <div key={i.id} className="rounded-lg bg-[var(--paper)] p-3"><div className="flex justify-between gap-3"><span>{i.product_name}</span><strong className="font-mono-data">{formatNumber(i.declared_qty)} {i.unit}</strong></div>{i.feedback ? <div className="mt-2 text-xs font-bold text-[var(--danger)]">Phản hồi NCC: {i.feedback}</div> : null}{profile.role === "supplier" && i.status !== "feedback" ? <form action="/api/deliveries" method="post" className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end"><input type="hidden" name="item_id" value={i.id}/><label className="grid gap-1 text-xs font-bold">Phản hồi nếu số liệu chưa đúng<Input name="feedback" required placeholder="Nhập nội dung sai lệch"/></label><Button name="action" value="feedback_supplier_return_item" variant="secondary">Phản hồi</Button></form> : null}</div>)}</div>
         </article>)}
         {!returns.length ? <p className="p-4 text-sm text-[var(--muted-foreground)]">Chưa có Phiếu trả vỏ.</p> : null}
       </div></Card>

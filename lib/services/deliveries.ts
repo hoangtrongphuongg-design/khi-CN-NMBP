@@ -319,8 +319,6 @@ export async function listDeliveries(profile: Profile) {
   const query = supplierFilter ? sql`
     SELECT d.id,d.delivery_code,d.trip_id,d.delivery_date,d.status,d.note,d.phc_confirmed_at,
       phc.full_name AS phc_confirmed_by_name,
-      (SELECT cr.status FROM data_correction_requests cr WHERE cr.target_type='supplier_delivery' AND cr.target_id=d.id ORDER BY cr.requested_at DESC LIMIT 1) AS correction_status,
-      (SELECT cr.request_code FROM data_correction_requests cr WHERE cr.target_type='supplier_delivery' AND cr.target_id=d.id ORDER BY cr.requested_at DESC LIMIT 1) AS correction_request_code,
       t.trip_code,t.trip_kind,t.transport_amount::float8 AS transport_amount,o.name AS supplier_name,
       COALESCE(json_agg(json_build_object(
         'id',di.id,'product_name',p.name,'unit',p.unit,'location_code',l.code,'location_name',l.name,
@@ -342,8 +340,6 @@ export async function listDeliveries(profile: Profile) {
   ` : sql`
     SELECT d.id,d.delivery_code,d.trip_id,d.delivery_date,d.status,d.note,d.phc_confirmed_at,
       phc.full_name AS phc_confirmed_by_name,
-      (SELECT cr.status FROM data_correction_requests cr WHERE cr.target_type='supplier_delivery' AND cr.target_id=d.id ORDER BY cr.requested_at DESC LIMIT 1) AS correction_status,
-      (SELECT cr.request_code FROM data_correction_requests cr WHERE cr.target_type='supplier_delivery' AND cr.target_id=d.id ORDER BY cr.requested_at DESC LIMIT 1) AS correction_request_code,
       t.trip_code,t.trip_kind,t.transport_amount::float8 AS transport_amount,o.name AS supplier_name,
       COALESCE(json_agg(json_build_object(
         'id',di.id,'product_name',p.name,'unit',p.unit,'location_code',l.code,'location_name',l.name,

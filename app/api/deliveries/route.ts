@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { requireProfile } from "@/lib/auth/session";
 import { confirmDeliveryItem, createSupplierDelivery, finalizeDeliveryByPhc, resubmitDeliveryItem } from "@/lib/services/deliveries";
 import { createSupplierReturn, feedbackSupplierReturnItem } from "@/lib/services/supplier-returns";
-import { createDataCorrectionRequest } from "@/lib/services/admin";
 
 function back(request: Request, params: string) {
   return NextResponse.redirect(new URL(`/deliveries?${params}`, request.url), 303);
@@ -43,15 +42,6 @@ export async function POST(request: Request) {
     } else if (action === "feedback_supplier_return_item") {
       tab = "returns";
       await feedbackSupplierReturnItem(profile, String(form.get("item_id")), String(form.get("feedback") || ""));
-    } else if (action === "create_data_correction_request") {
-      const targetType = String(form.get("target_type") || "") as "supplier_delivery" | "supplier_return";
-      tab = targetType === "supplier_return" ? "returns" : "deliveries";
-      await createDataCorrectionRequest(profile, {
-        targetType,
-        targetId: String(form.get("target_id") || ""),
-        reason: String(form.get("reason") || ""),
-        requestedChange: String(form.get("requested_change") || ""),
-      });
     } else {
       throw new Error("Hành động không hợp lệ");
     }
