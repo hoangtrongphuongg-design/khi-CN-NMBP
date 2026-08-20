@@ -446,3 +446,14 @@ Có cơ cấu chi phí, xu hướng, top loại khí, bảng tổng hợp theo l
 - Điều chuyển: bên lập phiếu được sửa sau phản hồi của bên nhận (Nhà máy → Mỏ: Workshop/Trưởng kho; Mỏ → Nhà máy: XSC Mỏ).
 - Khi đã được duyệt cuối cùng thì dữ liệu bị khóa; sai sau duyệt cuối phải xử lý bằng cơ chế điều chỉnh/audit riêng, không sửa âm thầm.
 - Không thay đổi bố cục mobile/desktop đã khóa ngoài các nút/form chỉnh sửa chỉ xuất hiện khi phiếu thật sự ở trạng thái phản hồi.
+
+
+## V1.0.37 — Hộp công việc Thủ kho và thứ tự Phiếu giao NCC
+
+- Xác nhận thực nhận NCC theo địa điểm: **Nhà máy = Thủ kho Hậu cần**, **Mỏ = XSC Mỏ**. Sau khi tất cả dòng được bên nhận xác nhận, **Trưởng kho Hậu cần** duyệt nhận hàng và hoàn tất Phiếu giao.
+- Workshop không còn thao tác xác nhận thực nhận tại Nhà máy; chỉ giữ quyền xem/kiểm soát phù hợp với vai trò.
+- Tổng quan Thủ kho (mobile + desktop) phải ưu tiên nhiệm vụ thực tế: Đổi, Mượn, Trả nội bộ; NCC giao Nhà máy chờ nhận; trả vỏ NCC Nhà máy trong chuyến đang xử lý; các phiếu bị phản hồi cần sửa; các phiếu xử lý chưa đủ.
+- Deep-link: nếu một nhóm tác vụ chỉ có 1 phiếu thì mở thẳng phiếu; nếu nhiều thì mở danh sách đã lọc đúng tác vụ.
+- Danh sách Phiếu giao NCC mặc định: **Có phản hồi → Chờ xác nhận thực nhận → Chờ Trưởng kho → đang xử lý khác → Hoàn tất**, và trong từng nhóm **mới nhất → cũ nhất**.
+- Phiếu chưa hoàn tất phải nổi bật hơn lịch sử hoàn tất, đặc biệt trên màn hình điện thoại.
+- Thay đổi này không sửa database và không thay đổi các giao diện/luồng khác đã khóa nếu không liên quan trực tiếp.

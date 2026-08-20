@@ -24,6 +24,7 @@ import { canCreateGroupRequest } from "@/lib/auth/permissions";
 import { getCostSnapshot, getDashboardData, getGroupUsageSnapshot, getRentalSnapshot } from "@/lib/services/dashboard";
 import { getGroupQuickData, listInternalRequests } from "@/lib/services/internal";
 import { listDeliveries } from "@/lib/services/deliveries";
+import { listSupplierReturns } from "@/lib/services/supplier-returns";
 import { listTransfers } from "@/lib/services/transfers";
 import { formatCurrency, formatNumber, toDateInput, toDateKey } from "@/lib/utils";
 import { sql } from "@/lib/db";
@@ -54,11 +55,10 @@ async function WorkshopHome({ profile }: { profile: Profile }) {
   const transfers = transfersRaw as any[];
   const today = toDateInput();
   const todayDeliveries = deliveries.filter((d) => toDateKey(d.delivery_date) === today).length;
-  const pendingXsc = deliveries.filter((d) => d.status === "pending").length;
   const borrowPending = requests.filter((r) => r.request_type === "borrow" && r.status === "pending").length;
   const reviewPending = requests.filter((r) => r.status === "executed_pending_review").length;
   const transferFeedback = transfers.filter((t:any) => t.status === "feedback").length;
-  const actionTotal = pendingXsc + borrowPending + reviewPending + transferFeedback;
+  const actionTotal = borrowPending + reviewPending + transferFeedback;
   const feedbackCount = deliveries.filter((d) => d.status === "feedback").length + transferFeedback;
   const alerts = data.lowStock.length + feedbackCount;
 
@@ -74,7 +74,6 @@ async function WorkshopHome({ profile }: { profile: Profile }) {
     <div className="overview-main-grid">
       <RentalPanel rental={rental}/>
       <AttentionPanel items={[
-        task(pendingXsc, "Phiếu giao chờ XSC", "/deliveries?status=pending", "Xác nhận số lượng thực nhận", "info"),
         task(borrowPending, "Phiếu Mượn chờ duyệt", "/internal?type=borrow&status=pending", "Duyệt mượn trong giờ hành chính", "warning"),
         task(reviewPending, "Phiếu nội bộ chờ duyệt", "/internal?status=executed_pending_review", "Hậu kiểm số lượng thực tế", "warning"),
         task(transferFeedback, "Điều chuyển có phản hồi", "/transfers?status=feedback", "Kiểm tra sai lệch Nhà máy ↔ Mỏ", "danger"),
@@ -128,28 +127,62 @@ async function WarehouseManagerHome({ profile }: { profile: Profile }) {
 }
 
 async function StorekeeperHome({ profile }: { profile: Profile }) {
-  const [data, deliveriesRaw, requestsRaw] = await Promise.all([getDashboardData(profile), listDeliveries(profile), listInternalRequests(profile)]);
+  const [deliveriesRaw, requestsRaw, supplierReturnsRaw] = await Promise.all([
+    listDeliveries(profile),
+    listInternalRequests(profile),
+    listSupplierReturns(profile),
+  ]);
   const deliveries = deliveriesRaw as any[];
   const requests = requestsRaw as any[];
+  const supplierReturns = supplierReturnsRaw as any[];
+
   const active = requests.filter((r) => ["pending","approved"].includes(r.status));
-  const exchange = active.filter((r) => r.request_type === "exchange").length;
-  const borrow = active.filter((r) => r.request_type === "borrow").length;
-  const returns = active.filter((r) => r.request_type === "return").length;
-  const phc = deliveries.filter((d) => d.status === "phc_pending").length;
+  const exchangeRows = active.filter((r) => r.request_type === "exchange");
+  const borrowRows = active.filter((r) => r.request_type === "borrow");
+  const returnRows = active.filter((r) => r.request_type === "return");
+  const internalFeedbackRows = requests.filter((r) => r.status === "feedback");
+  const partialRows = requests.filter((r) => !["completed","cancelled","rejected","feedback"].includes(r.status) && Array.isArray(r.items) && r.items.some((i:any) => i.actual_qty != null && Number(i.actual_qty) < Number(i.requested_qty)));
+
+  const plantReceiveRows = deliveries.filter((d) => (d.items || []).some((i:any) => i.location_code === "PLANT" && i.status === "pending"));
+  const plantReceiveFeedbackRows = deliveries.filter((d) => (d.items || []).some((i:any) => i.location_code === "PLANT" && i.status === "feedback" && Boolean(i.confirmed_by_name)));
+  const plantReturnFeedbackRows = supplierReturns.filter((r:any) => r.source_location_code === "PLANT" && (r.warehouse_review_status === "feedback" || r.status === "feedback" || (r.items || []).some((i:any) => i.status === "feedback")));
+  const plantReturnOpportunityRows = deliveries.filter((d:any) => {
+    if (!["pending","phc_pending"].includes(d.status)) return false;
+    if (!(d.items || []).some((i:any) => i.location_code === "PLANT")) return false;
+    return !supplierReturns.some((r:any) => r.trip_id === d.trip_id && r.source_location_code === "PLANT" && r.status !== "cancelled");
+  });
+
+  const correctionTotal = internalFeedbackRows.length + plantReceiveFeedbackRows.length + plantReturnFeedbackRows.length;
+  const exchangeHref = taskHref(exchangeRows, "/internal?type=exchange&status=pending");
+  const borrowHref = taskHref(borrowRows, "/internal?type=borrow");
+  const returnHref = taskHref(returnRows, "/internal?type=return&status=pending");
+  const partialHref = taskHref(partialRows, "/internal?status=active&partial=1");
+  const internalFeedbackHref = taskHref(internalFeedbackRows, "/internal?status=feedback");
+  const plantReceiveHref = deliveryTaskHref(plantReceiveRows, "/deliveries?action=plant_receive");
+  const plantReceiveFeedbackHref = deliveryTaskHref(plantReceiveFeedbackRows, "/deliveries?action=plant_receive");
+  const plantReturnHref = deliveryTaskHref(plantReturnOpportunityRows, "/deliveries?action=plant_return");
+  const plantReturnFeedbackHref = plantReturnFeedbackRows.length === 1
+    ? `/deliveries?tab=returns&review=feedback#return-${plantReturnFeedbackRows[0].id}`
+    : "/deliveries?tab=returns&review=feedback";
 
   return <div className="overview-page">
-    <PageHeading title="Tổng quan" subtitle="Chỉ hiển thị những việc cần xử lý ngay trong ca làm việc."/>
+    <PageHeading title="Tổng quan" subtitle="Đăng nhập là thấy ngay nhiệm vụ của Thủ kho; bấm vào để mở đúng phiếu và xử lý."/>
     <MetricGrid>
-      <Metric icon={<Repeat2/>} label="Đổi chờ xử lý" value={exchange}/>
-      <Metric icon={<Handshake/>} label="Mượn chờ xử lý" value={borrow}/>
-      <Metric icon={<RotateCcw/>} label="Trả chờ nhận" value={returns}/>
-      <Metric icon={<Truck/>} label="NCC chờ Trưởng kho" value={phc}/>
+      <Metric icon={<Truck/>} label="NCC chờ nhận" value={plantReceiveRows.length}/>
+      <Metric icon={<Repeat2/>} label="Đổi chờ xử lý" value={exchangeRows.length}/>
+      <Metric icon={<RotateCcw/>} label="Trả chờ nhận" value={returnRows.length}/>
+      <Metric icon={<MessageCircleWarning/>} label="Cần chỉnh sửa" value={correctionTotal} tone={correctionTotal ? "warning" : "success"}/>
     </MetricGrid>
     <AttentionPanel items={[
-      task(exchange, "Phiếu Đổi chờ xử lý", "/internal?type=exchange&status=pending", "Nhập số lượng thực tế và hoàn tất", "info"),
-      task(borrow, "Phiếu Mượn chờ xử lý", "/internal?type=borrow", "Cấp số lượng thực tế", "info"),
-      task(returns, "Phiếu Trả chờ nhận", "/internal?type=return&status=pending", "Nhận chai trả về", "info"),
-      task(data.lowStock.length, "Loại khí tồn thấp", "/inventory", "Kiểm tra tồn đầy tại Kho", "danger"),
+      task(plantReceiveRows.length, "NCC giao Nhà máy chờ nhận", plantReceiveHref, "Xác nhận số lượng thực nhận tại Nhà máy", "info"),
+      task(exchangeRows.length, "Phiếu Đổi chờ xử lý", exchangeHref, "Nhập số lượng thực tế và hoàn tất", "info"),
+      task(borrowRows.length, "Phiếu Mượn chờ xử lý", borrowHref, "Cấp số lượng thực tế", "info"),
+      task(returnRows.length, "Phiếu Trả chờ nhận", returnHref, "Nhận chai trả về Kho", "info"),
+      task(plantReturnOpportunityRows.length, "Trả vỏ NCC tại Nhà máy", plantReturnHref, "Mở chuyến đang giao để nhập vỏ trả cùng chuyến", "info"),
+      task(plantReceiveFeedbackRows.length, "Nhận NCC cần chỉnh sửa", plantReceiveFeedbackHref, "Xem phản hồi của Trưởng kho, sửa số thực nhận và gửi lại", "danger"),
+      task(plantReturnFeedbackRows.length, "Trả vỏ NCC cần chỉnh sửa", plantReturnFeedbackHref, "Sửa số trả vỏ theo phản hồi và gửi lại duyệt", "danger"),
+      task(internalFeedbackRows.length, "Phiếu nội bộ cần chỉnh sửa", internalFeedbackHref, "Xem phản hồi, chỉnh số thực tế và gửi lại", "danger"),
+      task(partialRows.length, "Phiếu xử lý chưa đủ", partialHref, "Kiểm tra các dòng thực tế thấp hơn số lượng yêu cầu", "warning"),
     ]}/>
     <QuickActions items={[
       { href: "/internal?type=exchange&status=pending", label: "Xử lý Đổi", icon: <Repeat2/> },
@@ -239,6 +272,10 @@ function taskHref(rows: any[], fallback: string) {
   return rows.length === 1 ? `/internal?focus=${rows[0].id}` : fallback;
 }
 
+function deliveryTaskHref(rows: any[], fallback: string) {
+  return rows.length === 1 ? `/deliveries?focus=${rows[0].id}` : fallback;
+}
+
 const groupProductOrder: Record<string, number> = { O2: 1, CO2: 2, N2: 3, ARCO2: 4, LPG12: 5, LPG45: 6, AR: 7 };
 function sortGroupProducts<T extends { code?: string }>(rows: T[]) {
   return [...rows].sort((a,b) => (groupProductOrder[String(a.code)] ?? 100) - (groupProductOrder[String(b.code)] ?? 100));
@@ -324,7 +361,7 @@ async function SupplierHome({ profile }: { profile: Profile }) {
   return <div className="overview-page">
     <PageHeading title="Tổng quan" subtitle="Theo dõi Phiếu giao, phản hồi và số vỏ đang cho NMBP thuê."/>
     <MetricGrid>
-      <Metric icon={<Clock3/>} label="Chờ XSC" value={pendingXsc}/>
+      <Metric icon={<Clock3/>} label="Chờ xác nhận" value={pendingXsc}/>
       <Metric icon={<ClipboardCheck/>} label="Chờ Trưởng kho" value={pendingPhc}/>
       <Metric icon={<MessageCircleWarning/>} label="Có phản hồi" value={feedback} tone={feedback ? "warning" : "success"}/>
       <Metric icon={<CheckCircle2/>} label="Hoàn tất" value={completed}/>
@@ -333,7 +370,7 @@ async function SupplierHome({ profile }: { profile: Profile }) {
     <div className="overview-main-grid">
       <RentalPanel rental={rental}/>
       <AttentionPanel items={[
-        task(pendingXsc, "Phiếu chờ XSC", "/deliveries?status=pending", "Đang chờ xác nhận thực nhận", "info"),
+        task(pendingXsc, "Phiếu chờ xác nhận", "/deliveries?status=pending", "Đang chờ Thủ kho/XSC Mỏ xác nhận thực nhận", "info"),
         task(pendingPhc, "Phiếu chờ Trưởng kho", "/deliveries?status=phc_pending", "Đang chờ duyệt nhận hàng", "warning"),
         task(feedback, "Phiếu có phản hồi", "/deliveries?status=feedback", "Mở phiếu để xem nội dung", "danger"),
       ]}/>
@@ -461,6 +498,6 @@ function RecentActivity({ deliveries = [], requests = [], transfers = [] }: { de
 }
 
 function dateLabel(value: string) { const [y,m,d] = value.split("-"); return `${d}/${m}/${y}`; }
-function deliveryStatus(status: string) { return status === "completed" ? "Hoàn tất" : status === "phc_pending" ? "Chờ Trưởng kho" : status === "feedback" ? "Có phản hồi" : "Chờ XSC"; }
+function deliveryStatus(status: string) { return status === "completed" ? "Hoàn tất" : status === "phc_pending" ? "Chờ Trưởng kho" : status === "feedback" ? "Có phản hồi" : "Chờ xác nhận thực nhận"; }
 function internalType(type: string) { return type === "exchange" ? "Đổi" : type === "borrow" ? "Mượn" : "Trả"; }
 function internalStatus(status: string) { return status === "completed" ? "Hoàn tất" : status === "executed_pending_review" ? "Chờ duyệt" : status === "approved" ? "Đã duyệt" : status === "feedback" ? "Có phản hồi" : "Chờ xử lý"; }

@@ -14,7 +14,7 @@ Hệ thống quản lý khí công nghiệp/vỏ chai tại Nhà máy Xi măng B
 
 ## Nghiệp vụ chính
 
-- Giao NCC: **NCC tạo → XSC xác nhận thực nhận theo địa điểm → PHC xác nhận hoàn tất**.
+- Giao NCC: **NCC tạo → Thủ kho xác nhận thực nhận tại Nhà máy / XSC Mỏ xác nhận tại Mỏ → Trưởng kho Hậu cần duyệt hoàn tất**.
 - Phiếu trả vỏ NCC có thể liên kết cùng mã chuyến để chỉ tính 1 cước.
 - Kho Hậu cần tách **chai đầy/rỗng**; nhóm chỉ theo dõi **tổng số chai tại nhóm**.
 - Mượn/Đổi/Trả nội bộ hỗ trợ **nhiều loại khí trong một phiếu**; Thủ kho nhập số thực tế từng dòng.

@@ -34,7 +34,7 @@ export function canReviewWarehouse(profile: Profile) {
 }
 
 export function canConfirmPlantDelivery(profile: Profile) {
-  return profile.role === "workshop";
+  return profile.role === "storekeeper";
 }
 
 export function canFinalizePhcDelivery(profile: Profile) {

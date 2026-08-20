@@ -105,7 +105,7 @@ export async function resubmitDeliveryItem(profile: Profile, itemId: string, dec
     `;
     if (!item || item.supplier_org_id !== profile.organization_id) throw new Error("Dòng giao không thuộc NCC này");
     if (item.status !== "feedback") throw new Error("Chỉ cập nhật dòng đang có phản hồi");
-    if (item.confirmed_by) throw new Error("Phản hồi này dành cho XSC chỉnh số thực nhận, NCC không được sửa số khai báo");
+    if (item.confirmed_by) throw new Error("Phản hồi này dành cho bên nhận chỉnh số thực nhận, NCC không được sửa số khai báo");
     const before = { declared_qty: Number(item.declared_qty), status: item.status };
     await tx`
       UPDATE supplier_delivery_items
@@ -118,8 +118,8 @@ export async function resubmitDeliveryItem(profile: Profile, itemId: string, dec
   });
 }
 
-// Bước 1: XSC xác nhận số lượng thực nhận theo địa điểm.
-// Nhà máy: Workshop. Mỏ: XSC Mỏ.
+// Bước 1: bên nhận xác nhận số lượng thực nhận theo địa điểm.
+// Nhà máy: Thủ kho Hậu cần. Mỏ: XSC Mỏ.
 // Bước này KHÔNG phụ thuộc đơn giá và CHƯA cập nhật tồn kho.
 export async function confirmDeliveryItem(profile: Profile, itemId: string, actualQty: number, action: "confirm"|"feedback", feedback?: string) {
   if (!(actualQty >= 0)) throw new Error("Số lượng không hợp lệ");
@@ -137,12 +137,12 @@ export async function confirmDeliveryItem(profile: Profile, itemId: string, actu
     if (action === "feedback") {
       if (!canFeedbackDelivery(profile)) throw new Error("Không có quyền phản hồi Phiếu giao");
       if (item.status === "xsc_confirmed" && profile.role !== "warehouse_manager") {
-        throw new Error("Sau khi XSC xác nhận, chỉ Trưởng kho Hậu cần được phản hồi trước bước duyệt nhận hàng");
+        throw new Error("Sau khi bên nhận xác nhận, chỉ Trưởng kho Hậu cần được phản hồi trước bước duyệt nhận hàng");
       }
       if (item.status === "pending") {
         const allowedPendingFeedback =
           profile.role === "warehouse_manager" ||
-          (item.location_code === "PLANT" && profile.role === "workshop") ||
+          (item.location_code === "PLANT" && profile.role === "storekeeper") ||
           (item.location_code === "MINE" && profile.role === "mine_xsc");
         if (!allowedPendingFeedback) throw new Error("Không có quyền phản hồi dòng giao này");
       }
@@ -160,8 +160,8 @@ export async function confirmDeliveryItem(profile: Profile, itemId: string, actu
       return;
     }
 
-    if (item.status !== "pending") throw new Error("Dòng giao chưa ở trạng thái chờ XSC xác nhận");
-    if (item.location_code === "PLANT" && !canConfirmPlantDelivery(profile)) throw new Error("Chỉ Workshop được xác nhận giao tại Nhà máy");
+    if (item.status !== "pending") throw new Error("Dòng giao chưa ở trạng thái chờ xác nhận thực nhận");
+    if (item.location_code === "PLANT" && !canConfirmPlantDelivery(profile)) throw new Error("Chỉ Thủ kho Hậu cần được xác nhận thực nhận tại Nhà máy");
     if (item.location_code === "MINE" && !canConfirmMineDelivery(profile)) throw new Error("Chỉ XSC Mỏ được xác nhận giao tại Mỏ");
 
     await tx`
@@ -198,8 +198,8 @@ export async function reviseConfirmedDeliveryItem(profile: Profile, itemId: stri
       FOR UPDATE OF di
     `;
     if (!item) throw new Error("Không tìm thấy dòng giao");
-    if (item.status !== "feedback" || !item.confirmed_by) throw new Error("Dòng này không phải phản hồi sau xác nhận XSC");
-    if (item.location_code === "PLANT" && !canConfirmPlantDelivery(profile)) throw new Error("Chỉ Workshop được chỉnh phần giao Nhà máy");
+    if (item.status !== "feedback" || !item.confirmed_by) throw new Error("Dòng này không phải phản hồi sau xác nhận thực nhận");
+    if (item.location_code === "PLANT" && !canConfirmPlantDelivery(profile)) throw new Error("Chỉ Thủ kho Hậu cần được chỉnh số thực nhận tại Nhà máy");
     if (item.location_code === "MINE" && !canConfirmMineDelivery(profile)) throw new Error("Chỉ XSC Mỏ được chỉnh phần giao Mỏ");
 
     const before = { confirmed_qty: Number(item.confirmed_qty || 0), feedback: item.feedback, status: item.status };
@@ -237,12 +237,12 @@ export async function reviseConfirmedDeliveryItem(profile: Profile, itemId: stri
       entityId: itemId,
       before,
       after: { confirmed_qty: actualQty, status: "xsc_confirmed", delivery_status: nextStatus },
-      note: "XSC chỉnh số thực nhận theo phản hồi của Trưởng kho và gửi lại duyệt.",
+      note: "Bên nhận chỉnh số thực nhận theo phản hồi của Trưởng kho và gửi lại duyệt.",
     });
   });
 }
 
-// Bước 2: Trưởng kho Hậu cần duyệt nhận hàng sau khi XSC đã xác nhận đủ các dòng.
+// Bước 2: Trưởng kho Hậu cần duyệt nhận hàng sau khi Thủ kho/XSC Mỏ đã xác nhận đủ các dòng.
 // Tại đây mới chốt đơn giá, cập nhật tồn và hoàn tất Phiếu.
 export async function finalizeDeliveryByPhc(profile: Profile, deliveryId: string) {
   if (!canFinalizePhcDelivery(profile)) throw new Error("Chỉ Trưởng kho Hậu cần được duyệt nhận hàng và hoàn tất Phiếu giao NCC");
@@ -275,10 +275,10 @@ export async function finalizeDeliveryByPhc(profile: Profile, deliveryId: string
     const pendingCount = (items as any[]).filter((item) => item.status === "pending").length;
     const invalidCount = (items as any[]).filter((item) => !["xsc_confirmed", "confirmed", "feedback", "pending"].includes(item.status)).length;
     if (feedbackCount > 0) throw new Error(`Còn ${feedbackCount} dòng đang có phản hồi, chưa thể Trưởng kho duyệt nhận hàng`);
-    if (pendingCount > 0) throw new Error(`Còn ${pendingCount} dòng chưa được XSC xác nhận`);
+    if (pendingCount > 0) throw new Error(`Còn ${pendingCount} dòng chưa được bên nhận xác nhận thực tế`);
     if (invalidCount > 0) throw new Error("Trạng thái dòng giao chưa hợp lệ để Trưởng kho duyệt nhận hàng");
 
-    // Không phụ thuộc trạng thái cha bị trễ. Nếu tất cả dòng đã XSC xác nhận thì PHC được hoàn tất.
+    // Không phụ thuộc trạng thái cha bị trễ. Nếu tất cả dòng đã được bên nhận xác nhận thì Trưởng kho được hoàn tất.
     const deliveryDate = toDateKey(delivery.delivery_date);
     const pricedItems: Array<{
       id: string;
@@ -386,7 +386,7 @@ export async function finalizeDeliveryByPhc(profile: Profile, deliveryId: string
 export async function listDeliveries(profile: Profile) {
   const supplierFilter = profile.role === "supplier" && profile.organization_id ? profile.organization_id : null;
   const query = supplierFilter ? sql`
-    SELECT d.id,d.delivery_code,d.trip_id,d.delivery_date,d.status,d.note,d.phc_confirmed_at,
+    SELECT d.id,d.delivery_code,d.trip_id,d.delivery_date,d.created_at,d.status,d.note,d.phc_confirmed_at,
       phc.full_name AS phc_confirmed_by_name,
       t.trip_code,t.trip_kind,t.transport_amount::float8 AS transport_amount,o.name AS supplier_name,
       COALESCE(json_agg(json_build_object(
@@ -405,9 +405,9 @@ export async function listDeliveries(profile: Profile) {
     LEFT JOIN users uc ON uc.id=di.confirmed_by
     WHERE d.supplier_org_id=${supplierFilter}::uuid
     GROUP BY d.id,t.id,o.name,phc.full_name
-    ORDER BY d.delivery_date DESC,d.created_at DESC LIMIT 100
+    ORDER BY CASE d.status WHEN 'feedback' THEN 0 WHEN 'pending' THEN 1 WHEN 'phc_pending' THEN 2 WHEN 'completed' THEN 4 WHEN 'cancelled' THEN 5 ELSE 3 END, d.delivery_date DESC,d.created_at DESC LIMIT 100
   ` : sql`
-    SELECT d.id,d.delivery_code,d.trip_id,d.delivery_date,d.status,d.note,d.phc_confirmed_at,
+    SELECT d.id,d.delivery_code,d.trip_id,d.delivery_date,d.created_at,d.status,d.note,d.phc_confirmed_at,
       phc.full_name AS phc_confirmed_by_name,
       t.trip_code,t.trip_kind,t.transport_amount::float8 AS transport_amount,o.name AS supplier_name,
       COALESCE(json_agg(json_build_object(
@@ -425,7 +425,7 @@ export async function listDeliveries(profile: Profile) {
     LEFT JOIN locations l ON l.id=di.destination_location_id
     LEFT JOIN users uc ON uc.id=di.confirmed_by
     GROUP BY d.id,t.id,o.name,phc.full_name
-    ORDER BY d.delivery_date DESC,d.created_at DESC LIMIT 100
+    ORDER BY CASE d.status WHEN 'feedback' THEN 0 WHEN 'pending' THEN 1 WHEN 'phc_pending' THEN 2 WHEN 'completed' THEN 4 WHEN 'cancelled' THEN 5 ELSE 3 END, d.delivery_date DESC,d.created_at DESC LIMIT 100
   `;
   return query;
 }

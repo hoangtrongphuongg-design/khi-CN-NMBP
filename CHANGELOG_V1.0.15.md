@@ -59,3 +59,13 @@
 - Điều chuyển Nhà máy ↔ Mỏ: bên lập điều chuyển được sửa sau phản hồi của bên nhận; tồn chỉ điều chỉnh phần chênh lệch rồi phiếu trở lại trạng thái đã cập nhật.
 - Các điều chỉnh sau phản hồi đều ghi audit; dữ liệu đã cập nhật tồn trước đó không bị chạy lại toàn bộ.
 - Báo cáo thuê vỏ và Tổng quan vỏ NCC đã tính cả bút toán điều chỉnh trả vỏ để số hiện tại/chi phí không lệch.
+
+
+## V1.0.37 — Thủ kho nhận NCC + ưu tiên phiếu dang dở
+- Baseline: V1.0.36. Không thay đổi database, không có SQL mới.
+- Nhà máy: Thủ kho Hậu cần là người xác nhận số lượng thực nhận từ NCC; Mỏ: XSC Mỏ xác nhận; Trưởng kho vẫn duyệt cuối. Workshop chỉ xem/kiểm soát, không còn là người xác nhận thực nhận tại Nhà máy.
+- Tổng quan Thủ kho trên mobile và desktop chuyển khối `Việc cần xử lý` thành hộp công việc thực tế: NCC chờ nhận, Đổi, Mượn, Trả, trả vỏ cùng chuyến, phản hồi cần sửa và phiếu xử lý chưa đủ. Deep-link mở thẳng phiếu nếu chỉ có 1, hoặc danh sách đã lọc nếu có nhiều.
+- KPI Thủ kho ưu tiên đúng nhiệm vụ: `NCC chờ nhận`, `Đổi chờ xử lý`, `Trả chờ nhận`, `Cần chỉnh sửa`; không còn KPI `NCC chờ Trưởng kho` trên Tổng quan Thủ kho.
+- Danh sách Phiếu giao NCC ưu tiên trạng thái: Có phản hồi → Chờ xác nhận thực nhận → Chờ Trưởng kho → trạng thái đang xử lý khác → Hoàn tất; trong từng nhóm sắp mới nhất → cũ nhất.
+- Phiếu dang dở được nhấn trực quan, đặc biệt trên mobile, và chia rõ `Cần xử lý trước` / `Đã hoàn tất`.
+- Giữ nguyên design system và các giao diện đã khóa ngoài các thay đổi chức năng nêu trên.
