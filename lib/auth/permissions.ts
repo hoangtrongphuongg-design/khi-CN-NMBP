@@ -42,7 +42,7 @@ export function canFinalizePhcDelivery(profile: Profile) {
 }
 
 export function canConfirmMineDelivery(profile: Profile) {
-  return ["mine_xsc"].includes(profile.role);
+  return profile.role === "mine_xsc";
 }
 
 export function isReadOnly(profile: Profile) {
@@ -51,4 +51,12 @@ export function isReadOnly(profile: Profile) {
 
 export function canFeedbackDelivery(profile: Profile) {
   return ["workshop","warehouse_manager","storekeeper","mine_xsc"].includes(profile.role);
+}
+
+/**
+ * Báo cáo chi phí chỉ dành cho 4 vai trò đã chốt nghiệp vụ.
+ * Cần dùng helper này đồng thời ở menu, page và API để tránh lộ dữ liệu qua URL trực tiếp.
+ */
+export function canViewCostReports(profile: Profile) {
+  return ["workshop", "warehouse_manager", "management_board", "supplier"].includes(profile.role);
 }

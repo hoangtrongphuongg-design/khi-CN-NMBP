@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import { requireProfile } from "@/lib/auth/session";
+import { canViewCostReports } from "@/lib/auth/permissions";
 import { sql } from "@/lib/db";
 import {
   getCylinderRentalDaily,
@@ -27,7 +28,7 @@ function excelColumns(defs: Array<[string, string, number]>) {
 
 export async function GET(request: Request) {
   const profile = await requireProfile();
-  if (["foreman","supervisor","worker"].includes(profile.role)) return new Response("Forbidden", { status: 403 });
+  if (!canViewCostReports(profile)) return new Response("Forbidden", { status: 403 });
   const url = new URL(request.url);
   const reportWindow = getDateRangeWindow(url.searchParams.get("start"), url.searchParams.get("end"));
   const start = reportWindow.startDate;

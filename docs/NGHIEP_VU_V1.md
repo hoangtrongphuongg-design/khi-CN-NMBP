@@ -287,3 +287,50 @@ Có cơ cấu chi phí, xu hướng, top loại khí, bảng tổng hợp theo l
 - LPG được lưu số dư đầu kỳ để đối chiếu nhưng không thuộc nhóm `cylinder_rental_eligible` theo cấu hình hiện tại.
 - Số liệu đầu kỳ này đồng thời được ghi nhận là tồn vật lý Kho Hậu cần tại 01/01/2026 ở bucket `unclassified` (đầu kỳ chưa phân loại đầy/rỗng).
 - Tồn Kho = Đầy + Rỗng + Đầu kỳ chưa phân loại. Khi phát sinh trả NCC, hệ thống ưu tiên trừ Rỗng; nếu Rỗng chưa đủ thì phần còn lại được trừ từ đầu kỳ chưa phân loại và lưu lịch sử rõ ràng.
+
+## V1.0.26 — Kiến trúc thông tin Tổng quan / Tồn khí / Mobile
+
+### Nguyên tắc không lặp dữ liệu
+- Tổng quan = KPI cấp cao + việc cần xử lý + hoạt động gần đây.
+- Số chai & tồn kho = nơi duy nhất sở hữu tồn chi tiết và vị trí phân bổ.
+- Giao nhận NCC = giao dịch NCC, xác nhận XSC/PHC, trả vỏ cùng chuyến.
+- Phiếu / Hoạt động = Mượn · Đổi · Trả nội bộ.
+- Điều phối = Nhà máy ↔ Mỏ.
+- Báo cáo = chi phí, lịch sử phân tích, Excel.
+- Admin = tài khoản, đơn giá, ngưỡng, lịch, cấu hình.
+- Chỉ được lặp số liệu khi cần cho thao tác, cảnh báo hoặc KPI tóm tắt.
+
+### Trang Số chai & tồn kho
+- Phần trên chỉ hiển thị Tồn Kho Hậu cần theo từng loại khí.
+- Kho tách Đầy / Rỗng bằng 2 màu; số đầu kỳ chưa phân loại chỉ là dòng phụ trung tính.
+- Cảnh báo tồn thấp hiển thị ngay tại card loại khí; bỏ tab Cảnh báo riêng.
+- Phần dưới chỉ còn `Theo vị trí / nhóm` và `Theo loại khí`.
+- Mỗi nhóm chỉ hiển thị tổng số chai từng loại đang quản lý, không tách đầy/rỗng.
+- Loại bằng 0 ở nhóm được ẩn. Nhóm Cối chính là Mỏ Tà Thiết.
+- Bỏ khối Nhận định nhanh.
+
+### Trang Tổng quan
+- Không lặp bảng tồn Kho Hậu cần.
+- Workshop / Trưởng kho / NCC / Ban quản đốc được xem 2 KPI tài chính: `Chi phí tháng này đến hôm nay` và `Lũy kế năm đến hôm nay`.
+- Hai KPI tài chính gồm: mua khí + thuê vỏ + XL-45 + vận chuyển. Chi tiết vẫn thuộc trang Báo cáo.
+- Chỉ 4 vai trò trên được mở Báo cáo chi phí; khóa đồng thời menu, page và API.
+- Bảng `Vỏ đang thuê NCC` hiển thị riêng từng loại khí theo công thức số dư đầu kỳ + NCC giao - trả NCC.
+- Có dòng biến động vỏ thuê: Đầu kỳ → NCC giao → Trả NCC → Hiện tại.
+- Các card `Việc cần xử lý` là deep-link: bấm vào mở đúng trang và đúng bộ lọc tác vụ.
+
+### Tổng quan theo vai trò
+- Workshop: vỏ thuê NCC, giao nhận hôm nay, phiếu cần xử lý, cảnh báo, 2 KPI chi phí, việc cần chú ý, hoạt động gần đây.
+- Trưởng kho: phiếu cần duyệt/hậu kiểm, chênh lệch, tồn thấp, vỏ thuê NCC, 2 KPI chi phí.
+- Thủ kho: Đổi/Mượn/Trả chờ xử lý, NCC chờ PHC, cảnh báo; không thấy chi phí.
+- Đốc công/Giám sát: yêu cầu đang chờ, phản hồi, thực hiện thiếu; 3 nút nhanh Đổi/Mượn/Trả.
+- Công nhân: chỉ theo dõi hoạt động nhóm; không tạo yêu cầu.
+- XSC Mỏ: NCC chờ XSC, điều chuyển, phản hồi, phát sinh hôm nay; không thấy chi phí.
+- NCC: Chờ XSC/PHC, phản hồi, hoàn tất, vỏ đang thuê, 2 KPI chi phí, tạo Phiếu giao.
+- Ban quản đốc: chỉ xem số vỏ thuê, cảnh báo, phiếu đang tồn và 2 KPI chi phí.
+- Admin: chỉ tình trạng user/đơn giá/email/cấu hình; không hiện chi phí vận hành.
+
+### Mobile-first
+- Vai trò vận hành ưu tiên điện thoại: card ngắn, nút ≥ 48px, bottom-sheet, không có bảng kéo ngang.
+- Bottom navigation tối đa 4 mục; chức năng ít dùng nằm dưới `Thêm`.
+- Một nghiệp vụ thông thường hướng đến 3 bước: bấm nghiệp vụ → nhập số lượng → xác nhận.
+- Desktop dùng cùng design system nhưng ưu tiên bảng, filter, đối chiếu, lịch sử, Excel và quản trị.

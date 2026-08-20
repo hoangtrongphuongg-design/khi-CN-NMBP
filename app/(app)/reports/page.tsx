@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardTitle } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import { requireProfile } from "@/lib/auth/session";
+import { canViewCostReports } from "@/lib/auth/permissions";
 import { getLocations, getProducts } from "@/lib/services/catalog";
 import {
   getCylinderRentalDaily,
@@ -85,7 +86,7 @@ export default async function ReportsPage({
   searchParams: Promise<{ start?: string; end?: string; location?: string; product?: string }>;
 }) {
   const profile = await requireProfile();
-  if (["foreman", "supervisor", "worker"].includes(profile.role)) redirect("/dashboard");
+  if (!canViewCostReports(profile)) redirect("/dashboard");
   const p = await searchParams;
   const window = getDateRangeWindow(p.start, p.end);
   const supplierOrgId = profile.role === "supplier" ? profile.organization_id : null;

@@ -57,7 +57,7 @@ function SummaryCard({ icon, value, label, tone }: { icon: ReactNode; value: num
   </div>;
 }
 
-export default async function DeliveriesPage({ searchParams }: { searchParams: Promise<{ error?: string; ok?: string; tab?: string; q?: string; status?: string; location?: string }> }) {
+export default async function DeliveriesPage({ searchParams }: { searchParams: Promise<{ error?: string; ok?: string; tab?: string; q?: string; status?: string; location?: string; focus?: string }> }) {
   const profile = await requireProfile();
   if (["foreman", "supervisor", "worker"].includes(profile.role)) redirect("/dashboard");
   const params = await searchParams;
@@ -74,7 +74,9 @@ export default async function DeliveriesPage({ searchParams }: { searchParams: P
   const q = String(params.q || "").trim().toLowerCase();
   const statusFilter = String(params.status || "all");
   const locationFilter = String(params.location || "all");
+  const focusId = String(params.focus || "");
   const filteredDeliveries = deliveries
+    .filter((d: any) => !focusId || d.id === focusId)
     .filter((d: any) => statusFilter === "all" || d.status === statusFilter)
     .filter((d: any) => locationFilter === "all" || d.items?.some((i: any) => i.location_code === locationFilter))
     .filter((d: any) => !q || [d.delivery_code, d.supplier_name, d.trip_code].some((v) => String(v || "").toLowerCase().includes(q)))
@@ -151,7 +153,7 @@ export default async function DeliveriesPage({ searchParams }: { searchParams: P
             (deliveryLocation?.location_code === "PLANT" && ["workshop", "warehouse_manager", "storekeeper"].includes(profile.role))
           );
 
-          return <details key={d.id} open={d.id === firstActionId} className={`group overflow-hidden rounded-xl border bg-white ${isAction ? "border-[#8CB9E5] shadow-sm" : "border-[var(--border)]"}`}>
+          return <details key={d.id} open={focusId ? d.id === focusId : d.id === firstActionId} className={`group overflow-hidden rounded-xl border bg-white ${isAction ? "border-[#8CB9E5] shadow-sm" : "border-[var(--border)]"}`}>
             <summary className="grid cursor-pointer list-none gap-3 p-4 md:grid-cols-[1.4fr_160px_1fr_auto_30px] md:items-center">
               <div><div className="font-mono-data text-sm font-extrabold text-[var(--brand)]">{d.delivery_code}</div><div className="mt-1 text-sm font-bold">{d.supplier_name}</div></div>
               <div className="flex items-center gap-2 text-sm"><CalendarDays size={16} className="text-[var(--muted-foreground)]"/><span>{dateVN(d.delivery_date)}</span></div>

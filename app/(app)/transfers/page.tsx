@@ -10,11 +10,14 @@ import { getProducts } from "@/lib/services/catalog";
 import { listTransfers } from "@/lib/services/transfers";
 import { formatNumber, toDateInput } from "@/lib/utils";
 
-export default async function TransfersPage({ searchParams }: { searchParams: Promise<{ error?: string; ok?: string }> }) {
+export default async function TransfersPage({ searchParams }: { searchParams: Promise<{ error?: string; ok?: string; status?: string; focus?: string }> }) {
   const profile = await requireProfile();
   if (["supplier","foreman","supervisor","worker"].includes(profile.role)) redirect("/dashboard");
   const params = await searchParams;
-  const [products, transfers] = await Promise.all([getProducts(), listTransfers()]);
+  const [products, transfersRaw] = await Promise.all([getProducts(), listTransfers()]);
+  const statusFilter = String(params.status || "");
+  const focusId = String(params.focus || "");
+  const transfers = (transfersRaw as any[]).filter((t:any) => (!focusId || t.id === focusId) && (!statusFilter || t.status === statusFilter));
   const eligible = products.filter((p:any)=>p.returnable_container && p.warehouse_split_full_empty);
   const canPlantToMine = ["workshop","warehouse_manager"].includes(profile.role);
   const canMineToPlant = profile.role === "mine_xsc";
@@ -23,6 +26,7 @@ export default async function TransfersPage({ searchParams }: { searchParams: Pr
   return <div className="grid gap-5">
     <div className="role-page-heading"><div><div className="role-kicker">Điều phối nội bộ</div><h1>Điều chuyển Nhà máy ↔ Mỏ</h1><p>Một lần xác nhận là cập nhật tồn ngay. Bên nhận chỉ phản hồi nếu có sai số.</p></div><div className="role-title-icon"><ArrowLeftRight size={24}/></div></div>
     {params.error ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-[var(--danger)]">{params.error}</div> : null}
+    {(statusFilter || focusId) ? <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm"><span><strong>Đang mở đúng tác vụ từ Tổng quan.</strong> {transfers.length} lệnh phù hợp.</span><a href="/transfers" className="font-bold text-[var(--brand)]">Xem tất cả →</a></div> : null}
 
     {(canPlantToMine || canMineToPlant) ? <section className="role-grid-2"><Card className="role-card"><div className="flex items-start justify-between gap-3"><div><CardTitle>{canPlantToMine ? "Nhà máy → Mỏ Tà Thiết" : "Mỏ Tà Thiết → Nhà máy"}</CardTitle><p className="mt-1 text-sm text-[var(--muted-foreground)]">Có thể thêm nhiều loại khí trong cùng một lệnh.</p></div><Badge tone="success">Cập nhật tồn ngay</Badge></div><div className="mt-4"><TransferQuickForm products={eligible as any} direction={canPlantToMine ? "plant_to_mine" : "mine_to_plant"} today={toDateInput()}/></div></Card>
     <Card className="role-card"><CardTitle>Nguyên tắc xử lý</CardTitle><div className="mt-4 grid gap-3 text-sm"><div className="role-note"><PackageCheck size={18}/><span><strong>Không xác nhận lần hai.</strong> Người tạo lệnh chịu trách nhiệm số lượng.</span></div><div className="role-note"><MapPin size={18}/><span>{canPlantToMine ? "Kho Hậu cần giảm; Nhóm Cối/Mỏ tăng ngay." : "Mỏ giảm; Kho Hậu cần cộng vào vỏ rỗng ngay."}</span></div><div className="role-note"><CircleAlert size={18}/><span>Nếu bên nhận phát hiện sai, dùng <strong>Phản hồi</strong>; không sửa/xóa lịch sử gốc.</span></div></div></Card></section> : null}

@@ -1,271 +1,132 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import {
-  Boxes,
-  Building2,
-  CircleAlert,
-  FileSpreadsheet,
-  Search,
-  UsersRound,
-  Warehouse,
-} from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { AlertTriangle, Boxes, Search, UsersRound, Warehouse } from "lucide-react";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { requireProfile } from "@/lib/auth/session";
-import { getInventory, getInventoryTotals } from "@/lib/services/inventory";
+import { getInventory } from "@/lib/services/inventory";
 import { sql } from "@/lib/db";
 import { formatNumber } from "@/lib/utils";
-import { getGroupQuickData } from "@/lib/services/internal";
 import type { InventoryRow } from "@/types/app";
 
-type SearchParams = Promise<{
-  place?: string;
-  product?: string;
-  status?: string;
-  q?: string;
-  tab?: string;
-}>;
-
-type ProductOverview = {
-  product_code: string;
-  product_name: string;
-  unit: string;
-  warehouse: number;
-  groups: number;
-  mine: number;
-  total: number;
-};
+type SearchParams = Promise<{ product?: string; q?: string; tab?: string }>;
 
 function isMineRow(row: InventoryRow) {
   return row.point_code === "GRP-COI" || row.point_name.toLowerCase().includes("cối");
 }
 
-function rowStatus(row: InventoryRow) {
-  if (row.point_kind !== "warehouse") return "managed";
-  if (Number(row.unclassified_qty || 0) > 0) return "unclassified";
-  if (row.low_threshold != null && Number(row.full_qty) <= Number(row.low_threshold)) return "low";
-  return "normal";
+function isLow(row: InventoryRow) {
+  return row.point_kind === "warehouse" && Number(row.unclassified_qty || 0) <= 0 && row.low_threshold != null && Number(row.full_qty) <= Number(row.low_threshold);
 }
 
-function statusLabel(status: string) {
-  if (status === "low") return "Tồn thấp";
-  if (status === "normal") return "Bình thường";
-  if (status === "unclassified") return "Đầu kỳ chưa phân loại";
-  return "Đang quản lý";
-}
-
-function statusTone(status: string): "warning" | "success" | "info" | "neutral" {
-  if (status === "low") return "warning";
-  if (status === "normal") return "success";
-  if (status === "unclassified") return "info";
-  return "neutral";
-}
-
-function productAccent(code: string) {
-  if (code === "O2") return "bg-blue-600";
-  if (code === "CO2") return "bg-slate-500";
-  if (code === "N2") return "bg-emerald-600";
-  if (code === "AR") return "bg-cyan-600";
-  if (code.startsWith("LPG")) return "bg-orange-500";
-  return "bg-[var(--brand)]";
-}
-
-function productMark(code: string) {
+function productShort(code: string) {
   if (code === "O2") return "O₂";
   if (code === "CO2") return "CO₂";
   if (code === "N2") return "N₂";
   if (code === "AR") return "Ar";
-  if (code.startsWith("LPG")) return "Gas";
-  return code.slice(0, 4);
+  if (code === "ARCO2") return "Ar/CO₂";
+  if (code === "LPG12") return "LPG12";
+  if (code === "LPG45") return "LPG45";
+  return code;
 }
 
-function buildOverview(rows: InventoryRow[], totals: any[]): ProductOverview[] {
-  return totals.map((t: any) => {
-    const productRows = rows.filter((r) => r.product_code === t.product_code);
-    const warehouse = productRows.filter((r) => r.point_kind === "warehouse").reduce((s, r) => s + Number(r.total_qty || 0), 0);
-    const mine = productRows.filter((r) => r.point_kind === "group" && isMineRow(r)).reduce((s, r) => s + Number(r.total_qty || 0), 0);
-    const groups = productRows.filter((r) => r.point_kind === "group" && !isMineRow(r)).reduce((s, r) => s + Number(r.total_qty || 0), 0);
-    return {
-      product_code: t.product_code,
-      product_name: t.product_name,
-      unit: t.unit,
-      warehouse,
-      groups,
-      mine,
-      total: warehouse + groups + mine,
-    };
-  }).filter((x) => x.total > 0);
-}
-
-function buildPointSummary(rows: InventoryRow[]) {
-  const map = new Map<string, { point_code: string; point_name: string; point_kind: InventoryRow["point_kind"]; rows: InventoryRow[] }>();
-  for (const row of rows) {
-    const item = map.get(row.point_code) ?? { point_code: row.point_code, point_name: row.point_name, point_kind: row.point_kind, rows: [] };
-    item.rows.push(row);
-    map.set(row.point_code, item);
+function buildGroups(rows: InventoryRow[]) {
+  const map = new Map<string, { code: string; name: string; mine: boolean; rows: InventoryRow[] }>();
+  for (const row of rows.filter((x) => x.point_kind === "group" && Number(x.total_qty) > 0)) {
+    const current = map.get(row.point_code) || { code: row.point_code, name: row.point_name, mine: isMineRow(row), rows: [] };
+    current.rows.push(row);
+    map.set(row.point_code, current);
   }
-  return [...map.values()].map((item) => {
-    const activeRows = item.rows.filter((r) => Number(r.total_qty) !== 0 || (r.point_kind === "warehouse" && r.low_threshold != null));
-    const nonZero = activeRows.filter((r) => Number(r.total_qty) > 0);
-    const main = [...nonZero].sort((a, b) => Number(b.total_qty) - Number(a.total_qty))[0];
-    const full = item.rows.reduce((s, r) => s + Number(r.full_qty || 0), 0);
-    const empty = item.rows.reduce((s, r) => s + Number(r.empty_qty || 0), 0);
-    const unclassified = item.rows.reduce((s, r) => s + Number(r.unclassified_qty || 0), 0);
-    const total = item.rows.reduce((s, r) => s + Number(r.total_qty || 0), 0);
-    const lowRows = item.rows.filter((r) => rowStatus(r) === "low");
-    return {
-      ...item,
-      activeRows,
-      gasLabel: nonZero.length === 0 ? "—" : nonZero.length === 1 ? nonZero[0].product_name : `${nonZero.length} loại khí`,
-      mainProduct: main?.product_name ?? "—",
-      full,
-      empty,
-      unclassified,
-      total,
-      lowRows,
-      status: lowRows.length ? "low" : item.point_kind === "warehouse" ? "normal" : "managed",
-    };
-  }).sort((a, b) => {
-    const rank = (x: typeof a) => x.point_kind === "warehouse" ? 1 : isMineRow(x.rows[0] ?? ({} as InventoryRow)) ? 3 : x.point_kind === "group" ? 2 : 4;
-    return rank(a) - rank(b) || a.point_name.localeCompare(b.point_name, "vi");
-  });
+  return [...map.values()].sort((a,b) => Number(a.mine)-Number(b.mine) || a.name.localeCompare(b.name, "vi"));
 }
 
 export default async function InventoryPage({ searchParams }: { searchParams: SearchParams }) {
   const profile = await requireProfile();
   if (profile.role === "supplier") redirect("/dashboard");
-
-  const p = await searchParams;
+  const params = await searchParams;
+  const tab = params.tab === "product" ? "product" : "location";
+  const q = String(params.q || "").trim().toLowerCase();
+  const product = String(params.product || "all");
   const allRows = await getInventory();
-  const limitedRole = ["foreman", "supervisor", "worker"].includes(profile.role);
-  const totals = limitedRole ? [] : await getInventoryTotals();
 
-  let permittedRows = allRows;
+  const warehouseRows = allRows.filter((x) => x.point_kind === "warehouse");
+  let groupRows = allRows.filter((x) => x.point_kind === "group");
+  const limitedRole = ["foreman","supervisor","worker"].includes(profile.role);
   if (limitedRole) {
-    const [g] = profile.group_id ? await sql`SELECT 'GRP-'||code AS point_code FROM work_groups WHERE id=${profile.group_id}::uuid` : [];
-    permittedRows = g ? allRows.filter((x) => x.point_code === g.point_code) : [];
+    const [group] = profile.group_id ? await sql<any[]>`SELECT 'GRP-'||code AS point_code FROM work_groups WHERE id=${profile.group_id}::uuid` : [];
+    groupRows = group ? groupRows.filter((x) => x.point_code === group.point_code) : [];
   }
 
-  const q = (p.q || "").trim().toLowerCase();
-  const place = p.place || "all";
-  const product = p.product || "all";
-  const status = p.status || "all";
-  const tab = ["location", "product", "warning"].includes(p.tab || "") ? p.tab! : "location";
-
-  const filteredRows = permittedRows.filter((row) => {
-    if (place === "warehouse" && row.point_kind !== "warehouse") return false;
-    if (place === "groups" && (row.point_kind !== "group" || isMineRow(row))) return false;
-    if (place === "mine" && !isMineRow(row)) return false;
+  const permittedRows = [...warehouseRows, ...groupRows];
+  const productOptions = [...new Map(permittedRows.map((r) => [r.product_code, r.product_name])).entries()].sort((a,b)=>a[1].localeCompare(b[1], "vi"));
+  const filtered = permittedRows.filter((row) => {
     if (product !== "all" && row.product_code !== product) return false;
-    if (status !== "all" && rowStatus(row) !== status) return false;
     if (q && !`${row.point_name} ${row.product_name} ${row.product_code}`.toLowerCase().includes(q)) return false;
     return true;
   });
 
-  const overview = buildOverview(permittedRows, totals);
-  const pointSummary = buildPointSummary(filteredRows);
-  const warehouseRows = permittedRows.filter((r) => r.point_kind === "warehouse");
-  const lowRows = warehouseRows.filter((r) => rowStatus(r) === "low");
-  const warehouseFull = warehouseRows.reduce((s, r) => s + Number(r.full_qty || 0), 0);
-  const warehouseEmpty = warehouseRows.reduce((s, r) => s + Number(r.empty_qty || 0), 0);
-  const warehouseUnclassified = warehouseRows.reduce((s, r) => s + Number(r.unclassified_qty || 0), 0);
-  const groupTotal = permittedRows.filter((r) => r.point_kind === "group" && !isMineRow(r)).reduce((s, r) => s + Number(r.total_qty || 0), 0);
-  const groupCount = new Set(permittedRows.filter((r) => r.point_kind === "group" && !isMineRow(r) && Number(r.total_qty) > 0).map((r) => r.point_code)).size;
-  const mineTotal = permittedRows.filter((r) => r.point_kind === "group" && isMineRow(r)).reduce((s, r) => s + Number(r.total_qty || 0), 0);
-  const systemTotal = overview.reduce((s, r) => s + r.total, 0);
+  const warehouseVisible = warehouseRows.filter((row) => {
+    const hasData = Number(row.full_qty) > 0 || Number(row.empty_qty) > 0 || Number(row.unclassified_qty) > 0;
+    return hasData || isLow(row);
+  }).filter((row) => product === "all" || row.product_code === product)
+    .filter((row) => !q || `${row.product_name} ${row.product_code}`.toLowerCase().includes(q));
 
-  const o2Warehouse = permittedRows.find((r) => r.point_kind === "warehouse" && r.product_code === "O2");
-  const o2GroupRows = permittedRows.filter((r) => r.point_kind === "group" && r.product_code === "O2");
-  const o2TopGroup = [...o2GroupRows].sort((a, b) => Number(b.total_qty) - Number(a.total_qty))[0];
-  const co2Total = overview.find((r) => r.product_code === "CO2");
+  const groups = buildGroups(filtered);
+  const allPositive = filtered.filter((row) => Number(row.total_qty) > 0);
+  const productsForDistribution = [...new Map(allPositive.map((row) => [row.product_code, row.product_name])).entries()]
+    .map(([code,name]) => ({ code, name, rows: allPositive.filter((r) => r.product_code === code) }))
+    .sort((a,b)=>a.name.localeCompare(b.name,"vi"));
 
-  const productOptions = [...new Map(permittedRows.map((r) => [r.product_code, r.product_name])).entries()].sort((a, b) => a[1].localeCompare(b[1], "vi"));
-  const tabHref = (nextTab: string) => {
-    const query = new URLSearchParams();
-    if (place !== "all") query.set("place", place);
-    if (product !== "all") query.set("product", product);
-    if (status !== "all") query.set("status", status);
-    if (p.q) query.set("q", p.q);
-    query.set("tab", nextTab);
-    return `/inventory?${query.toString()}`;
+  const queryForTab = (next: string) => {
+    const qs = new URLSearchParams();
+    if (product !== "all") qs.set("product", product);
+    if (params.q) qs.set("q", params.q);
+    qs.set("tab", next);
+    return `/inventory?${qs.toString()}`;
   };
 
-  if (limitedRole) {
-    const quick = await getGroupQuickData(profile);
-    const groupRows = quick.filter((x:any) => Number(x.groupQty) > 0);
-    const warehouseQuick = quick.filter((x:any) => Number(x.warehouseFull) > 0 || Number(x.warehouseEmpty) > 0 || Number(x.warehouseUnclassified) > 0);
-    return <div className="grid gap-5">
-      <div><h1 className="font-display m-0 text-2xl text-[var(--brand-deep)]">Tồn khí</h1><p className="mt-1 text-sm text-[var(--muted-foreground)]">Chỉ hiển thị những loại khí đang có số liệu.</p></div>
-      <Card><div className="mb-4 flex items-center gap-2"><Boxes size={19} className="text-[var(--brand)]"/><h2 className="m-0 text-lg font-extrabold">Số chai tại nhóm</h2></div>{groupRows.length ? <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{groupRows.map((row:any) => <div key={row.id} className="rounded-xl border border-[var(--border)] p-4"><div className="text-sm font-bold">{row.name}</div><div className="font-mono-data mt-2 text-3xl font-extrabold text-[var(--brand-deep)]">{formatNumber(row.groupQty)} <span className="font-sans text-sm text-[var(--muted-foreground)]">{row.unit}</span></div></div>)}</div> : <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--paper)] p-4 text-sm text-[var(--muted-foreground)]">Nhóm hiện chưa có chai khí.</div>}</Card>
-      <Card><div className="mb-4 flex items-center gap-2"><Warehouse size={19} className="text-[var(--brand)]"/><h2 className="m-0 text-lg font-extrabold">Tồn Kho Hậu cần</h2></div>{warehouseQuick.length ? <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">{warehouseQuick.map((row:any)=><div key={row.id} className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-3 rounded-xl border border-[var(--border)] p-3"><strong>{row.name}</strong><div className="min-w-16 text-center"><div className="text-[11px] font-bold uppercase text-[var(--success)]">Đầy</div><div className="font-mono-data text-xl font-extrabold text-[var(--success)]">{formatNumber(row.warehouseFull)}</div></div><div className="min-w-16 border-l border-[var(--border)] pl-3 text-center"><div className="text-[11px] font-bold uppercase text-[var(--muted-foreground)]">Rỗng</div><div className="font-mono-data text-xl font-extrabold">{formatNumber(row.warehouseEmpty)}</div></div>{Number(row.warehouseUnclassified)>0?<div className="min-w-20 border-l border-[var(--border)] pl-3 text-center"><div className="text-[11px] font-bold uppercase text-amber-700">Đầu kỳ</div><div className="font-mono-data text-xl font-extrabold text-amber-700">{formatNumber(row.warehouseUnclassified)}</div></div>:null}</div>)}</div> : <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--paper)] p-4 text-sm text-[var(--muted-foreground)]">Kho hiện chưa có số liệu tồn.</div>}</Card>
-    </div>;
-  }
+  return <div className="inventory-v2-page">
+    <div className="inventory-v2-heading"><div><h1>Tồn khí & vỏ chai</h1><p>Kho Hậu cần xem đầy/rỗng; các nhóm chỉ theo dõi tổng số chai đang quản lý.</p></div></div>
 
-  return <div className="grid gap-5">
-    <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-      <div><h1 className="font-display m-0 text-2xl text-[var(--brand-deep)] md:text-3xl">Tồn khí & vỏ chai</h1><p className="mt-1 text-sm text-[var(--muted-foreground)]">Nhìn nhanh tồn Kho, phân bổ theo các nhóm Nhà máy và Mỏ Tà Thiết.</p></div>
-      <Link href="/reports" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-[var(--brand)] px-4 py-2 font-bold text-white hover:bg-[var(--brand-hover)]"><FileSpreadsheet size={18}/>Xuất Excel</Link>
-    </div>
-
-    <Card className="p-3 md:p-4">
-      <form method="get" className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1.4fr_auto] xl:items-end">
-        <label className="grid gap-1.5 text-xs font-bold text-[var(--neutral)]">Địa điểm<select name="place" defaultValue={place} className="min-h-11 rounded-lg border border-[var(--border)] bg-white px-3 text-sm text-[var(--foreground)]"><option value="all">Tất cả</option><option value="warehouse">Kho Hậu cần</option><option value="groups">Các nhóm Nhà máy</option><option value="mine">Mỏ Tà Thiết</option></select></label>
-        <label className="grid gap-1.5 text-xs font-bold text-[var(--neutral)]">Loại khí<select name="product" defaultValue={product} className="min-h-11 rounded-lg border border-[var(--border)] bg-white px-3 text-sm text-[var(--foreground)]"><option value="all">Tất cả</option>{productOptions.map(([code, name]) => <option key={code} value={code}>{name}</option>)}</select></label>
-        <label className="grid gap-1.5 text-xs font-bold text-[var(--neutral)]">Trạng thái<select name="status" defaultValue={status} className="min-h-11 rounded-lg border border-[var(--border)] bg-white px-3 text-sm text-[var(--foreground)]"><option value="all">Tất cả</option><option value="low">Tồn thấp</option><option value="normal">Bình thường</option><option value="managed">Đang quản lý</option></select></label>
-        <label className="grid gap-1.5 text-xs font-bold text-[var(--neutral)]">Tìm kiếm<div className="flex min-h-11 items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3"><Search size={17} className="text-[var(--muted-foreground)]"/><input name="q" defaultValue={p.q || ""} placeholder="Tìm vị trí / nhóm / loại khí" className="min-w-0 flex-1 border-0 bg-transparent outline-none"/></div></label>
-        <button type="submit" className="min-h-11 rounded-lg border border-[var(--border)] bg-white px-4 font-bold hover:bg-[var(--muted)]">Áp dụng</button>
-      </form>
+    <Card className="inventory-warehouse-panel">
+      <div className="inventory-section-head"><div><div className="inventory-section-title"><Warehouse size={20}/>Tồn Kho Hậu cần theo loại khí</div><p>Chỉ hiển thị loại có dữ liệu hoặc đang cảnh báo. Cảnh báo tồn thấp nằm ngay trên từng loại khí.</p></div></div>
+      {warehouseVisible.length ? <div className="warehouse-product-grid">{warehouseVisible.map((row) => {
+        const full = Number(row.full_qty || 0);
+        const empty = Number(row.empty_qty || 0);
+        const unclassified = Number(row.unclassified_qty || 0);
+        const known = full + empty;
+        const low = isLow(row);
+        const fullPct = known > 0 ? (full/known)*100 : 0;
+        const emptyPct = known > 0 ? (empty/known)*100 : 0;
+        return <article key={row.product_code} className={`warehouse-product-card ${low ? "is-low" : ""}`}>
+          <div className="warehouse-product-top"><div className="warehouse-product-name"><span>{productShort(row.product_code)}</span><div><strong>{row.product_name}</strong><small>{row.product_code}</small></div></div>{low ? <div className="warehouse-low-badge"><AlertTriangle size={14}/>Tồn thấp</div> : null}</div>
+          <div className="warehouse-qty-grid"><div className="full"><span>Đầy</span><strong>{formatNumber(full)}</strong></div><div className="empty"><span>Rỗng</span><strong>{formatNumber(empty)}</strong></div><div className="total"><span>Tổng đã phân loại</span><strong>{formatNumber(known)}</strong></div></div>
+          <div className="warehouse-split-bar" aria-label={`Đầy ${full}, rỗng ${empty}`}><i className="full" style={{width:`${fullPct}%`}}/><i className="empty" style={{width:`${emptyPct}%`}}/></div>
+          {unclassified > 0 ? <div className="warehouse-unclassified">Đầu kỳ chưa phân loại đầy/rỗng: <strong>{formatNumber(unclassified)} {row.unit}</strong></div> : null}
+          {low ? <div className="warehouse-low-note">Kho còn <strong>{formatNumber(full)} {row.unit} đầy</strong> · Ngưỡng <strong>{formatNumber(row.low_threshold || 0)}</strong></div> : null}
+        </article>;
+      })}</div> : <div className="inventory-empty">Kho hiện chưa có loại khí phù hợp bộ lọc.</div>}
     </Card>
 
-    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-      <Card className="flex items-center gap-4"><div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-blue-50 text-[var(--brand)]"><Boxes size={22}/></div><div><div className="text-xs font-bold text-[var(--muted-foreground)]">Tổng vỏ NCC quản lý</div><div className="mt-1 text-3xl font-extrabold text-[var(--brand-deep)]">{formatNumber(systemTotal)} <span className="text-sm">chai/bồn</span></div><div className="mt-1 text-xs text-[var(--muted-foreground)]">Toàn hệ thống</div></div></Card>
-      <Card className="flex items-center gap-4"><div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-blue-50 text-[var(--brand)]"><Warehouse size={22}/></div><div className="min-w-0"><div className="text-xs font-bold text-[var(--muted-foreground)]">Kho Hậu cần</div><div className="mt-2 flex flex-wrap items-end gap-3"><div><div className="text-[11px] text-[var(--muted-foreground)]">Đầy</div><div className="text-xl font-extrabold text-[var(--success)]">{formatNumber(warehouseFull)}</div></div><div className="h-8 border-l border-[var(--border)]"/><div><div className="text-[11px] text-[var(--muted-foreground)]">Rỗng</div><div className="text-xl font-extrabold text-[var(--brand)]">{formatNumber(warehouseEmpty)}</div></div>{warehouseUnclassified>0?<><div className="h-8 border-l border-[var(--border)]"/><div><div className="text-[11px] text-amber-700">Đầu kỳ chưa PL</div><div className="text-xl font-extrabold text-amber-700">{formatNumber(warehouseUnclassified)}</div></div></>:null}</div></div></Card>
-      <Card className="flex items-center gap-4"><div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-blue-50 text-[var(--brand)]"><UsersRound size={22}/></div><div><div className="text-xs font-bold text-[var(--muted-foreground)]">Các nhóm đang quản lý</div><div className="mt-1 text-3xl font-extrabold text-[var(--brand-deep)]">{formatNumber(groupTotal)} <span className="text-sm">chai</span></div><div className="mt-1 text-xs text-[var(--muted-foreground)]">{groupCount} nhóm có tồn</div></div></Card>
-      <Card className="flex items-center gap-4"><div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-violet-50 text-violet-700"><Building2 size={22}/></div><div><div className="text-xs font-bold text-[var(--muted-foreground)]">Mỏ Tà Thiết</div><div className="mt-1 text-3xl font-extrabold text-[var(--brand-deep)]">{formatNumber(mineTotal)} <span className="text-sm">chai</span></div><div className="mt-1 text-xs text-[var(--muted-foreground)]">Tồn Nhóm Cối / Mỏ</div></div></Card>
-      <Card className="flex items-center gap-4"><div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-orange-50 text-orange-600"><CircleAlert size={24}/></div><div><div className="text-xs font-bold text-[var(--muted-foreground)]">Cảnh báo tồn thấp</div><div className="mt-1 text-3xl font-extrabold text-[var(--danger)]">{lowRows.length} <span className="text-sm">loại</span></div><div className="mt-1 text-xs text-[var(--muted-foreground)]">Cần kiểm tra đặt hàng</div></div></Card>
-    </div>
-
-    <Card>
-      <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between"><div><h2 className="m-0 text-base font-extrabold">Tổng quan theo loại khí</h2><p className="mt-1 text-xs text-[var(--muted-foreground)]">Mỗi thanh cho biết chai/bồn đang nằm ở đâu trong hệ thống.</p></div><div className="flex flex-wrap gap-3 text-xs font-bold text-[var(--muted-foreground)]"><span className="flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-sm bg-blue-500"/>Kho</span><span className="flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-sm bg-emerald-500"/>Nhóm</span><span className="flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-sm bg-violet-500"/>Mỏ Tà Thiết</span></div></div>
-      <div className="grid gap-3">{overview.length ? overview.map((item) => {
-        const max = Math.max(item.total, 1);
-        const segments = [
-          { value: item.warehouse, className: "bg-blue-500", label: "Kho" },
-          { value: item.groups, className: "bg-emerald-500", label: "Nhóm" },
-          { value: item.mine, className: "bg-violet-500", label: "Mỏ" },
-        ];
-        return <div key={item.product_code} className="grid gap-2 md:grid-cols-[220px_1fr_110px] md:items-center">
-          <div className="flex items-center gap-3"><div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11px] font-extrabold text-white ${productAccent(item.product_code)}`}>{productMark(item.product_code)}</div><div className="font-bold">{item.product_name}</div></div>
-          <div className="flex h-8 overflow-hidden rounded-lg bg-[var(--muted)]">{segments.map((segment) => segment.value > 0 ? <div key={segment.label} title={`${segment.label}: ${formatNumber(segment.value)}`} className={`flex min-w-[28px] items-center justify-center px-1 text-[11px] font-extrabold text-white ${segment.className}`} style={{ width: `${Math.max((segment.value / max) * 100, 4)}%` }}>{formatNumber(segment.value)}</div> : null)}</div>
-          <div className="text-right text-sm font-extrabold text-[var(--brand-deep)]">{formatNumber(item.total)} <span className="text-xs font-bold text-[var(--muted-foreground)]">{item.unit}</span></div>
-        </div>;
-      }) : <div className="rounded-lg bg-[var(--muted)] p-6 text-center text-sm text-[var(--muted-foreground)]">Chưa có số lượng tồn để hiển thị.</div>}</div>
+    <Card className="inventory-filter-card">
+      <form method="get" className="inventory-filter-form"><input type="hidden" name="tab" value={tab}/><label><span>Tìm nhanh</span><div className="relative"><Search size={16} className="pointer-events-none absolute left-3 top-3 text-[var(--muted-foreground)]"/><Input name="q" defaultValue={params.q || ""} placeholder="Nhóm hoặc loại khí..." className="pl-9"/></div></label><label><span>Loại khí</span><Select name="product" defaultValue={product}><option value="all">Tất cả loại khí</option>{productOptions.map(([code,name])=><option value={code} key={code}>{name}</option>)}</Select></label><button className="inventory-filter-button" type="submit">Áp dụng</button>{(params.q || product !== "all") ? <Link href={`/inventory?tab=${tab}`} className="inventory-reset">Xóa lọc</Link> : null}</form>
     </Card>
 
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
-      <Card className="overflow-hidden p-0">
-        <div className="flex gap-1 overflow-x-auto border-b border-[var(--border)] px-4 pt-3">
-          <Link href={tabHref("location")} className={`whitespace-nowrap border-b-2 px-3 py-3 text-sm font-bold ${tab === "location" ? "border-[var(--brand)] text-[var(--brand)]" : "border-transparent text-[var(--neutral)]"}`}>Theo vị trí / nhóm</Link>
-          <Link href={tabHref("product")} className={`whitespace-nowrap border-b-2 px-3 py-3 text-sm font-bold ${tab === "product" ? "border-[var(--brand)] text-[var(--brand)]" : "border-transparent text-[var(--neutral)]"}`}>Theo loại khí</Link>
-          <Link href={tabHref("warning")} className={`whitespace-nowrap border-b-2 px-3 py-3 text-sm font-bold ${tab === "warning" ? "border-[var(--brand)] text-[var(--brand)]" : "border-transparent text-[var(--neutral)]"}`}>Cảnh báo</Link>
-        </div>
+    <Card className="inventory-tabs-card">
+      <div className="inventory-tabs"><Link href={queryForTab("location")} className={tab === "location" ? "active" : ""}>Theo vị trí / nhóm</Link><Link href={queryForTab("product")} className={tab === "product" ? "active" : ""}>Theo loại khí</Link></div>
 
-        {tab === "location" ? <div className="overflow-x-auto p-4"><table className="mobile-card-table w-full border-collapse text-sm"><thead className="bg-[var(--muted)]"><tr className="text-left text-xs uppercase tracking-wide text-[var(--muted-foreground)]"><th className="p-3">Vị trí / Nhóm</th><th className="p-3">Loại khí</th><th className="p-3">Đầy</th><th className="p-3">Rỗng</th><th className="p-3">Đầu kỳ chưa PL</th><th className="p-3">Tổng</th><th className="p-3">Trạng thái</th></tr></thead><tbody>{pointSummary.map((item) => <tr key={item.point_code} className="border-t border-[var(--border)]"><td data-label="Vị trí / Nhóm" className="p-3"><div className="flex items-center gap-2 font-bold">{item.point_kind === "warehouse" ? <Warehouse size={17} className="text-[var(--brand)]"/> : <UsersRound size={17} className="text-[var(--brand)]"/>}{item.point_name}</div></td><td data-label="Loại khí" className="p-3"><div className="font-bold">{item.gasLabel}</div>{item.gasLabel !== item.mainProduct && item.mainProduct !== "—" ? <div className="mt-0.5 text-[11px] text-[var(--muted-foreground)]">Nhiều nhất: {item.mainProduct}</div> : null}</td><td data-label="Đầy" className="p-3 font-mono-data font-bold text-[var(--success)]">{item.point_kind === "warehouse" ? formatNumber(item.full) : "—"}</td><td data-label="Rỗng" className="p-3 font-mono-data font-bold text-[var(--brand)]">{item.point_kind === "warehouse" ? formatNumber(item.empty) : "—"}</td><td data-label="Đầu kỳ chưa PL" className="p-3 font-mono-data font-bold text-amber-700">{item.point_kind === "warehouse" ? formatNumber(item.unclassified) : "—"}</td><td data-label="Tổng" className="p-3 font-mono-data font-extrabold">{formatNumber(item.total)}</td><td data-label="Trạng thái" className="p-3"><Badge tone={statusTone(item.status)}>{statusLabel(item.status)}</Badge>{item.lowRows.length > 1 ? <div className="mt-1 text-[11px] text-[var(--warning)]">{item.lowRows.length} loại dưới ngưỡng</div> : null}</td></tr>)}</tbody></table>{pointSummary.length === 0 ? <div className="p-6 text-center text-sm text-[var(--muted-foreground)]">Không có dữ liệu phù hợp bộ lọc.</div> : null}</div> : null}
+      {tab === "location" ? <div className="group-stock-grid">{groups.length ? groups.map((group) => {
+        const max = Math.max(...group.rows.map((r) => Number(r.total_qty)), 1);
+        const total = group.rows.reduce((s,r)=>s+Number(r.total_qty),0);
+        return <article className="group-stock-card" key={group.code}><div className="group-stock-head"><div className="group-stock-name"><UsersRound size={18}/><div><strong>{group.name}</strong><span>{group.mine ? "Mỏ Tà Thiết" : "Nhóm Nhà máy"}</span></div></div><div className="group-stock-total"><strong>{formatNumber(total)}</strong><span>chai</span></div></div><div className="group-gas-list">{group.rows.sort((a,b)=>Number(b.total_qty)-Number(a.total_qty)).map((row) => <div className="group-gas-row" key={`${group.code}-${row.product_code}`}><div className="group-gas-label"><span>{productShort(row.product_code)}</span><strong>{row.product_name}</strong></div><div className="group-gas-track"><i style={{width:`${Math.max((Number(row.total_qty)/max)*100,8)}%`}}/></div><div className="group-gas-qty">{formatNumber(row.total_qty)}</div></div>)}</div></article>;
+      }) : <div className="inventory-empty">Chưa có nhóm nào đang quản lý chai khí phù hợp bộ lọc.</div>}</div> : null}
 
-        {tab === "product" ? <div className="grid gap-3 p-4">{filteredRows.filter((r) => Number(r.total_qty) > 0).map((row) => <div key={`${row.point_code}-${row.product_code}`} className="grid gap-3 rounded-xl border border-[var(--border)] p-4 sm:grid-cols-[1fr_180px_120px] sm:items-center"><div><div className="font-bold">{row.product_name}</div><div className="mt-1 text-xs text-[var(--muted-foreground)]">{row.point_name}</div></div><div className="text-sm"><span className="text-[var(--muted-foreground)]">Số lượng: </span><strong>{formatNumber(row.total_qty)} {row.unit}</strong></div><div className="sm:text-right"><Badge tone={statusTone(rowStatus(row))}>{statusLabel(rowStatus(row))}</Badge></div></div>)}{filteredRows.filter((r) => Number(r.total_qty) > 0).length === 0 ? <div className="p-6 text-center text-sm text-[var(--muted-foreground)]">Không có dữ liệu phù hợp bộ lọc.</div> : null}</div> : null}
-
-        {tab === "warning" ? <div className="grid gap-3 p-4">{lowRows.map((row) => <div key={row.product_code} className="flex flex-col gap-3 rounded-xl border border-orange-200 bg-orange-50/60 p-4 sm:flex-row sm:items-center sm:justify-between"><div><div className="font-bold text-[var(--warning)]">{row.product_name}</div><div className="mt-1 text-sm">Kho còn <strong>{formatNumber(row.full_qty)} {row.unit}</strong> đầy · Ngưỡng <strong>{formatNumber(row.low_threshold ?? 0)}</strong></div></div><Badge tone="warning">Tồn thấp</Badge></div>)}{lowRows.length === 0 ? <div className="p-6 text-center text-sm text-[var(--muted-foreground)]">Hiện không có loại khí nào dưới ngưỡng cảnh báo.</div> : null}</div> : null}
-      </Card>
-
-      <Card>
-        <div className="flex items-center gap-2"><Building2 size={19} className="text-[var(--brand)]"/><h2 className="m-0 text-base font-extrabold">Nhận định nhanh</h2></div>
-        <div className="mt-5 grid gap-5">
-          <div className="flex gap-3"><div className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${o2Warehouse && rowStatus(o2Warehouse) === "low" ? "bg-red-50 text-[var(--danger)]" : "bg-blue-50 text-[var(--brand)]"}`}><CircleAlert size={19}/></div><div className="text-sm leading-6"><strong>O₂ tại Kho Hậu cần</strong><br/>{o2Warehouse ? <>còn <strong>{formatNumber(o2Warehouse.full_qty)} chai đầy</strong>{o2Warehouse.low_threshold != null ? `, ngưỡng ${formatNumber(o2Warehouse.low_threshold)} chai.` : "."}</> : "chưa có dữ liệu tồn."}</div></div>
-          <div className="flex gap-3"><div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-50 text-[var(--brand)]"><UsersRound size={19}/></div><div className="text-sm leading-6"><strong>{o2TopGroup?.point_name || "Các nhóm"}</strong><br/>{o2TopGroup && Number(o2TopGroup.total_qty) > 0 ? <>đang giữ O₂ nhiều nhất với <strong>{formatNumber(o2TopGroup.total_qty)} chai</strong>.</> : "chưa có nhóm nào giữ O₂."}</div></div>
-          <div className="flex gap-3"><div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-700"><Boxes size={19}/></div><div className="text-sm leading-6"><strong>CO₂</strong><br/>{co2Total ? <>đang có <strong>{formatNumber(co2Total.total)} {co2Total.unit}</strong> tổng quản lý.</> : "chưa có số lượng tồn."}</div></div>
-        </div>
-        <Link href={tabHref("warning")} className="mt-6 inline-flex text-sm font-bold text-[var(--brand)] hover:underline">Xem chi tiết cảnh báo →</Link>
-      </Card>
-    </div>
+      {tab === "product" ? <div className="product-distribution-grid">{productsForDistribution.length ? productsForDistribution.map((productItem) => {
+        const max = Math.max(...productItem.rows.map((r)=>Number(r.total_qty)),1);
+        const total = productItem.rows.reduce((s,r)=>s+Number(r.total_qty),0);
+        return <article className="product-distribution-card" key={productItem.code}><div className="product-distribution-head"><div><span>{productShort(productItem.code)}</span><div><strong>{productItem.name}</strong><small>Tổng đang quản lý: {formatNumber(total)}</small></div></div></div><div className="product-location-list">{productItem.rows.sort((a,b)=>Number(b.total_qty)-Number(a.total_qty)).map((row) => <div className="product-location-row" key={`${productItem.code}-${row.point_code}`}><div className="product-location-name">{row.point_kind === "warehouse" ? <Warehouse size={15}/> : <UsersRound size={15}/>}<span>{row.point_name}</span></div><div className="product-location-track"><i style={{width:`${Math.max((Number(row.total_qty)/max)*100,8)}%`}}/></div><strong>{formatNumber(row.total_qty)}</strong></div>)}</div></article>;
+      }) : <div className="inventory-empty">Chưa có dữ liệu phân bổ phù hợp bộ lọc.</div>}</div> : null}
+    </Card>
   </div>;
 }

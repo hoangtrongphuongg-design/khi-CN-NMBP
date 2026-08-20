@@ -26,6 +26,7 @@ type Props = {
   canCreate: boolean;
   pendingCount?: number;
   compact?: boolean;
+  defaultMode?: RequestType | null;
 };
 
 const MODE_LABEL: Record<RequestType, string> = { exchange: "đổi", borrow: "mượn", return: "trả" };
@@ -39,7 +40,7 @@ function tone(code: string) {
   return { icon: "text-[var(--brand)] bg-blue-50", number: "text-[var(--brand)]" };
 }
 
-export function GroupQuickPanel({ groupName, products, canCreate, pendingCount = 0, compact = false }: Props) {
+export function GroupQuickPanel({ groupName, products, canCreate, pendingCount = 0, compact = false, defaultMode = null }: Props) {
   const router = useRouter();
   const [mode, setMode] = useState<RequestType | null>(null);
   const [items, setItems] = useState<DraftItem[]>([]);
@@ -55,6 +56,12 @@ export function GroupQuickPanel({ groupName, products, canCreate, pendingCount =
     const timer = window.setTimeout(() => setToast(null), 3200);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  useEffect(() => {
+    if (defaultMode && canCreate) openMode(defaultMode);
+    // Chỉ mở sheet theo deep-link ở lần mount đầu tiên.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const visibleGroup = useMemo(() => products.filter((p) => Number(p.groupQty) > 0), [products]);
   const visibleWarehouse = useMemo(() => products.filter((p) => Number(p.warehouseFull) > 0 || Number(p.warehouseEmpty) > 0), [products]);
