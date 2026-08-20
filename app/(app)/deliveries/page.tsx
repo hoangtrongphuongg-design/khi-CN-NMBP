@@ -17,7 +17,7 @@ import { formatCurrency, formatNumber, toDateInput, toDateKey } from "@/lib/util
 
 const deliveryStatus: Record<string, { label: string; className: string }> = {
   pending: { label: "Chờ XSC xác nhận", className: "status-info" },
-  phc_pending: { label: "Chờ PHC xác nhận", className: "status-warning" },
+  phc_pending: { label: "Chờ Trưởng kho duyệt", className: "status-warning" },
   feedback: { label: "Có phản hồi", className: "status-danger" },
   completed: { label: "Hoàn tất", className: "status-success" },
   cancelled: { label: "Đã hủy", className: "status-neutral" },
@@ -26,6 +26,50 @@ const deliveryStatus: Record<string, { label: string; className: string }> = {
 function DeliveryBadge({ status }: { status: string }) {
   const item = deliveryStatus[status] || { label: status, className: "status-neutral" };
   return <span className={`inline-flex rounded-md border px-2.5 py-1 text-xs font-bold ${item.className}`}>{item.label}</span>;
+}
+
+const returnReviewStatus: Record<string, { label: string; className: string }> = {
+  pending: { label: "Chờ Trưởng kho duyệt", className: "status-warning" },
+  approved: { label: "Trưởng kho đã duyệt", className: "status-success" },
+  feedback: { label: "Trưởng kho phản hồi", className: "status-danger" },
+};
+
+function ReturnReviewBadge({ status }: { status: string }) {
+  const item = returnReviewStatus[status] || { label: status || "Chưa có trạng thái", className: "status-neutral" };
+  return <span className={`inline-flex rounded-md border px-2.5 py-1 text-[11px] font-bold ${item.className}`}>{item.label}</span>;
+}
+
+function ReturnReviewActions({ profile, ret, returnTab }: { profile: any; ret: any; returnTab: "deliveries" | "returns" }) {
+  const status = String(ret.warehouse_review_status || "pending");
+  const locationLabel = ret.source_location_code === "MINE" ? "Mỏ" : "Nhà máy";
+  return <div className="mt-3 border-t border-[var(--border)] pt-3">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <ReturnReviewBadge status={status}/>
+      {ret.warehouse_reviewed_by_name ? <span className="text-[11px] text-[var(--muted-foreground)]">{ret.warehouse_reviewed_by_name}{ret.warehouse_reviewed_at ? ` · ${new Date(ret.warehouse_reviewed_at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}` : ""}</span> : null}
+    </div>
+    {ret.warehouse_review_note ? <div className={`mt-2 rounded-lg p-2 text-xs font-bold ${status === "feedback" ? "bg-red-50 text-[var(--danger)]" : "bg-[var(--paper)] text-[var(--muted-foreground)]"}`}>{ret.warehouse_review_note}</div> : null}
+    {profile.role === "warehouse_manager" && status !== "approved" ? <div className="mt-3 grid gap-2">
+      <form action="/api/deliveries" method="post">
+        <input type="hidden" name="action" value="review_supplier_return"/>
+        <input type="hidden" name="return_id" value={ret.id}/>
+        <input type="hidden" name="decision" value="approve"/>
+        <input type="hidden" name="return_tab" value={returnTab}/>
+        <Button type="submit" className="w-full">Duyệt trả vỏ {locationLabel}</Button>
+      </form>
+      <details>
+        <summary className="cursor-pointer text-xs font-bold text-[#92400E]">Số liệu chưa đúng? Phản hồi / yêu cầu chỉnh</summary>
+        <form action="/api/deliveries" method="post" className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
+          <input type="hidden" name="action" value="review_supplier_return"/>
+          <input type="hidden" name="return_id" value={ret.id}/>
+          <input type="hidden" name="decision" value="feedback"/>
+          <input type="hidden" name="return_tab" value={returnTab}/>
+          <label className="grid gap-1 text-xs font-bold">Nội dung phản hồi<Input name="review_note" required placeholder="Nhập nội dung cần kiểm tra / chỉnh lại"/></label>
+          <Button type="submit" variant="secondary">Gửi phản hồi</Button>
+        </form>
+      </details>
+      <p className="m-0 text-[11px] text-[var(--muted-foreground)]">Hậu kiểm không cộng/trừ tồn lần nữa. Phản hồi cũng không tự hoàn tác tồn đã cập nhật khi Thủ kho/XSC Mỏ xác nhận.</p>
+    </div> : null}
+  </div>;
 }
 
 function dateVN(value: unknown) {
@@ -38,7 +82,7 @@ function deliveryNeedsAction(profile: any, delivery: any) {
   if (profile.role === "supplier") return delivery.items?.some((i: any) => i.status === "feedback");
   if (profile.role === "workshop") return delivery.items?.some((i: any) => i.location_code === "PLANT" && i.status === "pending");
   if (profile.role === "mine_xsc") return delivery.items?.some((i: any) => i.location_code === "MINE" && i.status === "pending");
-  if (["warehouse_manager", "storekeeper"].includes(profile.role)) return delivery.status === "phc_pending";
+  if (profile.role === "warehouse_manager") return delivery.status === "phc_pending";
   return false;
 }
 
@@ -57,7 +101,7 @@ function SummaryCard({ icon, value, label, tone }: { icon: ReactNode; value: num
   </div>;
 }
 
-export default async function DeliveriesPage({ searchParams }: { searchParams: Promise<{ error?: string; ok?: string; tab?: string; q?: string; status?: string; location?: string; focus?: string }> }) {
+export default async function DeliveriesPage({ searchParams }: { searchParams: Promise<{ error?: string; ok?: string; tab?: string; q?: string; status?: string; location?: string; focus?: string; review?: string }> }) {
   const profile = await requireProfile();
   if (["foreman", "supervisor", "worker"].includes(profile.role)) redirect("/dashboard");
   const params = await searchParams;
@@ -75,6 +119,8 @@ export default async function DeliveriesPage({ searchParams }: { searchParams: P
   const statusFilter = String(params.status || "all");
   const locationFilter = String(params.location || "all");
   const focusId = String(params.focus || "");
+  const reviewFilter = String(params.review || "all");
+  const filteredReturns = (returns as any[]).filter((r: any) => reviewFilter === "all" || String(r.warehouse_review_status || "pending") === reviewFilter);
   const filteredDeliveries = deliveries
     .filter((d: any) => !focusId || d.id === focusId)
     .filter((d: any) => statusFilter === "all" || d.status === statusFilter)
@@ -110,13 +156,13 @@ export default async function DeliveriesPage({ searchParams }: { searchParams: P
     {tab === "deliveries" ? <>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryCard icon={<Truck size={20}/>} value={counts.pending} label="Chờ XSC" tone="blue" />
-        <SummaryCard icon={<Clock3 size={20}/>} value={counts.phc} label="Chờ PHC" tone="amber" />
+        <SummaryCard icon={<Clock3 size={20}/>} value={counts.phc} label="Chờ Trưởng kho" tone="amber" />
         <SummaryCard icon={<MessageCircleWarning size={20}/>} value={counts.feedback} label="Có phản hồi" tone="red" />
         <SummaryCard icon={<CheckCircle2 size={20}/>} value={counts.completed} label="Hoàn tất" tone="green" />
       </div>
 
       {profile.role === "supplier" ? <Card>
-        <div className="flex items-center justify-between gap-3"><CardTitle>Tạo phiếu giao NCC</CardTitle><span className="text-xs text-[var(--muted-foreground)]">NCC tạo phiếu · XSC/PHC xác nhận sau</span></div>
+        <div className="flex items-center justify-between gap-3"><CardTitle>Tạo phiếu giao NCC</CardTitle><span className="text-xs text-[var(--muted-foreground)]">NCC tạo phiếu · XSC xác nhận · Trưởng kho duyệt sau</span></div>
         <div className="mt-4"><DeliveryCreateForm products={products as any} locations={locations as any} today={toDateInput()} /></div>
       </Card> : null}
 
@@ -128,7 +174,7 @@ export default async function DeliveriesPage({ searchParams }: { searchParams: P
           </label>
           <label className="grid gap-1 text-xs font-bold text-[var(--muted-foreground)]">Trạng thái
             <Select name="status" defaultValue={statusFilter}>
-              <option value="all">Tất cả</option><option value="pending">Chờ XSC</option><option value="phc_pending">Chờ PHC</option><option value="feedback">Có phản hồi</option><option value="completed">Hoàn tất</option>
+              <option value="all">Tất cả</option><option value="pending">Chờ XSC</option><option value="phc_pending">Chờ Trưởng kho</option><option value="feedback">Có phản hồi</option><option value="completed">Hoàn tất</option>
             </Select>
           </label>
           <label className="grid gap-1 text-xs font-bold text-[var(--muted-foreground)]">Điểm giao
@@ -175,7 +221,7 @@ export default async function DeliveriesPage({ searchParams }: { searchParams: P
                       const canConfirm = item.location_code === "PLANT" ? canConfirmPlantDelivery(profile) : canConfirmMineDelivery(profile);
                       const canConfirmNow = canConfirm && item.status === "pending";
                       const supplierResubmit = profile.role === "supplier" && item.status === "feedback";
-                      const phcCanFeedback = canFeedbackDelivery(profile) && ["warehouse_manager", "storekeeper"].includes(profile.role) && item.status === "xsc_confirmed";
+                      const phcCanFeedback = canFeedbackDelivery(profile) && profile.role === "warehouse_manager" && item.status === "xsc_confirmed";
                       return <div key={item.id} className="rounded-lg border border-[var(--border)] bg-[var(--paper)] p-3">
                         <div className="flex flex-wrap items-start justify-between gap-2">
                           <div><div className="font-bold">{item.product_name}</div><div className="mt-1 text-xs text-[var(--muted-foreground)]">{item.location_name} · NCC khai <span className="font-mono-data font-bold text-[var(--ink)]">{formatNumber(item.declared_qty)} {item.unit}</span>{item.confirmed_qty != null ? <> · Thực nhận <span className="font-mono-data font-bold text-[var(--ink)]">{formatNumber(item.confirmed_qty)}</span></> : null}</div></div>
@@ -202,7 +248,7 @@ export default async function DeliveriesPage({ searchParams }: { searchParams: P
                 </section>
 
                 <section className={`rounded-xl border bg-white p-4 ${phcReady ? "border-amber-200" : "border-[var(--border)]"}`}>
-                  <div className="font-extrabold text-[#92400E]">Bước 2 · PHC xác nhận hoàn tất</div>
+                  <div className="font-extrabold text-[#92400E]">Bước 2 · Trưởng kho duyệt nhận hàng</div>
                   <div className="mt-4 grid gap-3 text-sm">
                     <div className="flex justify-between gap-3"><span className="text-[var(--muted-foreground)]">Dòng đã XSC xác nhận</span><strong>{xscDone}/{itemCount}</strong></div>
                     <div className="flex justify-between gap-3"><span className="text-[var(--muted-foreground)]">Phiếu giao / chuyến</span><strong className="font-mono-data text-right">{d.delivery_code}</strong></div>
@@ -211,8 +257,8 @@ export default async function DeliveriesPage({ searchParams }: { searchParams: P
                   </div>
 
                   {d.status === "completed" ? <div className="mt-4 rounded-lg border border-green-200 bg-green-50 p-3 text-sm font-bold text-[#15803D]">Đã hoàn tất{d.phc_confirmed_by_name ? ` bởi ${d.phc_confirmed_by_name}` : ""}{d.phc_confirmed_at ? ` · ${new Date(d.phc_confirmed_at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}` : ""}</div> : phcReady ? (
-                    canFinalizePhcDelivery(profile) ? <form action="/api/deliveries" method="post" className="mt-4"><input type="hidden" name="delivery_id" value={d.id}/><Button name="action" value="finalize_delivery_phc" className="w-full">PHC xác nhận hoàn tất</Button><p className="mb-0 mt-2 text-center text-[11px] text-[var(--muted-foreground)]">Xác nhận sẽ cập nhật tồn thực tế. Nếu thiếu đơn giá, phiếu vẫn hoàn tất và chờ Admin bổ sung giá sau.</p></form> : <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-[#92400E]">Đã đủ XSC xác nhận · Chờ PHC hoàn tất</div>
-                  ) : <div className="mt-4 rounded-lg bg-[var(--paper)] p-3 text-sm text-[var(--muted-foreground)]">PHC sẽ được xác nhận sau khi tất cả dòng giao đã được XSC xác nhận.</div>}
+                    canFinalizePhcDelivery(profile) ? <form action="/api/deliveries" method="post" className="mt-4"><input type="hidden" name="delivery_id" value={d.id}/><Button name="action" value="finalize_delivery_phc" className="w-full">Trưởng kho duyệt nhận hàng</Button><p className="mb-0 mt-2 text-center text-[11px] text-[var(--muted-foreground)]">Xác nhận sẽ cập nhật tồn thực tế. Nếu thiếu đơn giá, phiếu vẫn hoàn tất và chờ Admin bổ sung giá sau.</p></form> : <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-[#92400E]">Đã đủ XSC xác nhận · Chờ Trưởng kho duyệt nhận hàng</div>
+                  ) : <div className="mt-4 rounded-lg bg-[var(--paper)] p-3 text-sm text-[var(--muted-foreground)]">Trưởng kho sẽ duyệt nhận hàng sau khi tất cả dòng giao đã được XSC xác nhận.</div>}
 
                   <div className="mt-4 border-t border-[var(--border)] pt-4">
                     <div className="flex items-center justify-between gap-2"><strong className="text-sm text-[var(--brand-deep)]">Trả vỏ cùng chuyến</strong><span className="rounded-full bg-green-50 px-2 py-1 text-[11px] font-bold text-[var(--success)]">+0 đ cước</span></div>
@@ -220,6 +266,7 @@ export default async function DeliveriesPage({ searchParams }: { searchParams: P
                       {tripReturns.map((ret: any) => <div key={ret.id} className="rounded-xl border border-green-100 bg-green-50 p-3 text-sm">
                         <div className="flex flex-wrap justify-between gap-2"><div><strong>{ret.return_code}</strong><div className="mt-1 text-xs text-[var(--muted-foreground)]">{ret.source_location}</div></div><DeliveryBadge status={ret.status}/></div>
                         <div className="mt-2 grid gap-1">{(ret.items || []).map((i: any) => <div key={i.id} className="flex justify-between gap-3"><span>{i.product_name}</span><strong className="font-mono-data">{formatNumber(i.declared_qty)} {i.unit}</strong></div>)}</div>
+                        <ReturnReviewActions profile={profile} ret={ret} returnTab="deliveries"/>
                       </div>)}
                     </div> : null}
                     {canReturnThisDelivery && !ownLinkedReturn ? <details className="mt-2"><summary className="cursor-pointer rounded-xl bg-[var(--brand)] px-4 py-3 text-center text-sm font-bold text-white">Trả vỏ tại {ownReturnLocationCode === "PLANT" ? "Nhà máy" : "Mỏ Tà Thiết"}</summary><div className="mt-3"><SupplierReturnForm products={products as any} deliveryId={d.id} deliveryCode={d.delivery_code} locationName={ownReturnLocationName}/></div></details> : null}
@@ -235,13 +282,22 @@ export default async function DeliveriesPage({ searchParams }: { searchParams: P
     </> : <>
       <Card className="border-blue-100 bg-blue-50">
         <CardTitle>Phiếu trả vỏ chỉ tạo từ Phiếu giao</CardTitle>
-        <p className="mb-0 mt-2 text-sm text-[var(--muted-foreground)]">Không có chuyến riêng đi lấy vỏ. Một chuyến có thể giao cả Nhà máy và Mỏ. Thủ kho chỉ tạo trả vỏ tại Nhà máy; XSC Mỏ chỉ tạo trả vỏ tại Mỏ. Mỗi bên chỉ nhập loại vỏ + số lượng và đều dùng chung cước của Phiếu giao.</p>
+        <p className="mb-0 mt-2 text-sm text-[var(--muted-foreground)]">Không có chuyến riêng đi lấy vỏ. Một chuyến có thể giao cả Nhà máy và Mỏ. Thủ kho chỉ tạo trả vỏ tại Nhà máy; XSC Mỏ chỉ tạo trả vỏ tại Mỏ. Mỗi bên chỉ nhập loại vỏ + số lượng và đều dùng chung cước của Phiếu giao. Tồn cập nhật ngay khi Thủ kho/XSC Mỏ xác nhận; Trưởng kho duyệt hậu kiểm sau.</p>
+      </Card>
+      <Card className="p-3 md:p-4">
+        <div className="flex flex-wrap gap-2 text-sm font-bold">
+          <Link href="/deliveries?tab=returns" className={`rounded-lg border px-3 py-2 ${reviewFilter === "all" ? "border-[var(--brand)] bg-blue-50 text-[var(--brand)]" : "border-[var(--border)]"}`}>Tất cả</Link>
+          <Link href="/deliveries?tab=returns&review=pending" className={`rounded-lg border px-3 py-2 ${reviewFilter === "pending" ? "border-amber-300 bg-amber-50 text-[#92400E]" : "border-[var(--border)]"}`}>Chờ Trưởng kho duyệt</Link>
+          <Link href="/deliveries?tab=returns&review=approved" className={`rounded-lg border px-3 py-2 ${reviewFilter === "approved" ? "border-green-300 bg-green-50 text-[#15803D]" : "border-[var(--border)]"}`}>Đã duyệt</Link>
+          <Link href="/deliveries?tab=returns&review=feedback" className={`rounded-lg border px-3 py-2 ${reviewFilter === "feedback" ? "border-red-300 bg-red-50 text-[#B91C1C]" : "border-[var(--border)]"}`}>Có phản hồi</Link>
+        </div>
       </Card>
       <Card className="overflow-hidden p-0"><div className="border-b border-[var(--border)] p-4 md:p-5"><CardTitle>Lịch sử trả vỏ NCC</CardTitle></div><div className="grid gap-3 p-3 md:p-5">
-        {returns.map((r: any) => <article key={r.id} className="rounded-xl border border-[var(--border)] bg-white p-4"><div className="flex flex-wrap justify-between gap-3"><div><div className="font-mono-data font-bold text-[var(--brand)]">{r.return_code}</div><div className="mt-1 text-sm font-bold">{r.source_location} · {dateVN(r.return_date)}</div><div className="mt-1 text-xs text-[var(--muted-foreground)]">Cùng Phiếu giao {r.delivery_code || "—"} · Không phát sinh thêm cước</div></div><DeliveryBadge status={r.status} /></div>
+        {filteredReturns.map((r: any) => <article key={r.id} className="rounded-xl border border-[var(--border)] bg-white p-4"><div className="flex flex-wrap justify-between gap-3"><div><div className="font-mono-data font-bold text-[var(--brand)]">{r.return_code}</div><div className="mt-1 text-sm font-bold">{r.source_location} · {dateVN(r.return_date)}</div><div className="mt-1 text-xs text-[var(--muted-foreground)]">Cùng Phiếu giao {r.delivery_code || "—"} · Không phát sinh thêm cước</div></div><DeliveryBadge status={r.status} /></div>
           <div className="mt-3 grid gap-2 text-sm">{(r.items || []).map((i: any) => <div key={i.id} className="rounded-lg bg-[var(--paper)] p-3"><div className="flex justify-between gap-3"><span>{i.product_name}</span><strong className="font-mono-data">{formatNumber(i.declared_qty)} {i.unit}</strong></div>{i.feedback ? <div className="mt-2 text-xs font-bold text-[var(--danger)]">Phản hồi NCC: {i.feedback}</div> : null}{profile.role === "supplier" && i.status !== "feedback" ? <form action="/api/deliveries" method="post" className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end"><input type="hidden" name="item_id" value={i.id}/><label className="grid gap-1 text-xs font-bold">Phản hồi nếu số liệu chưa đúng<Input name="feedback" required placeholder="Nhập nội dung sai lệch"/></label><Button name="action" value="feedback_supplier_return_item" variant="secondary">Phản hồi</Button></form> : null}</div>)}</div>
+          <ReturnReviewActions profile={profile} ret={r} returnTab="returns"/>
         </article>)}
-        {!returns.length ? <p className="p-4 text-sm text-[var(--muted-foreground)]">Chưa có Phiếu trả vỏ.</p> : null}
+        {!filteredReturns.length ? <p className="p-4 text-sm text-[var(--muted-foreground)]">Chưa có Phiếu trả vỏ.</p> : null}
       </div></Card>
     </>}
   </div>;

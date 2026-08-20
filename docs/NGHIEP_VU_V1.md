@@ -423,3 +423,13 @@ Có cơ cấu chi phí, xu hướng, top loại khí, bảng tổng hợp theo l
 ### Chuẩn thời gian hiển thị
 - Mọi timestamp hiển thị cho người dùng tại NMBP dùng múi giờ `Asia/Ho_Chi_Minh` (GMT+7).
 - Timestamp trong database giữ nguyên chuẩn lưu trữ; không dịch/chỉnh dữ liệu lịch sử bằng SQL chỉ để thay đổi cách hiển thị.
+
+
+## V1.0.35 — Trưởng kho duyệt nhận và hậu kiểm trả vỏ NCC
+
+- Phiếu giao NCC: XSC Nhà máy/Mỏ xác nhận số thực nhận trước. Chỉ **Trưởng kho Hậu cần** được duyệt nhận hàng và hoàn tất Phiếu giao. Thủ kho không còn quyền hoàn tất Phiếu giao NCC.
+- Phiếu trả vỏ cùng chuyến: **Thủ kho tại Nhà máy / XSC Mỏ tại Mỏ xác nhận là tồn kho và số vỏ thuê NCC cập nhật ngay**, đúng như vận hành thực tế.
+- Sau khi trả vỏ đã cập nhật tồn, Phiếu trả chuyển sang trạng thái hậu kiểm `Chờ Trưởng kho duyệt`. Trưởng kho duyệt riêng Phiếu trả Nhà máy và Phiếu trả Mỏ.
+- Duyệt hậu kiểm không phát sinh bút toán tồn lần hai. Nếu Trưởng kho phản hồi, hệ thống chỉ ghi trạng thái/nội dung phản hồi và **không tự hoàn tác tồn**.
+- Phiếu trả hiện có trước V1.0.35 được SQL 14 đưa vào hàng chờ hậu kiểm mà không thay đổi số tồn.
+- Dữ liệu giao/nhận NCC gốc không bị xóa.

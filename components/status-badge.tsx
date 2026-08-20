@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 const map: Record<string, { label: string; tone: "info"|"warning"|"danger"|"success"|"neutral" }> = {
   pending: { label: "Chờ xử lý", tone: "warning" },
   xsc_confirmed: { label: "XSC đã xác nhận", tone: "info" },
-  phc_pending: { label: "Chờ PHC xác nhận", tone: "warning" },
+  phc_pending: { label: "Chờ Trưởng kho duyệt", tone: "warning" },
   approved: { label: "Đã duyệt", tone: "info" },
   in_transit: { label: "Đang vận chuyển", tone: "info" },
   executed_pending_review: { label: "Đã thực hiện · Chờ hậu kiểm", tone: "info" },

@@ -91,8 +91,9 @@ async function WorkshopHome({ profile }: { profile: Profile }) {
 }
 
 async function WarehouseManagerHome({ profile }: { profile: Profile }) {
-  const [data, deliveriesRaw, requestsRaw, rental, costs] = await Promise.all([
+  const [data, deliveriesRaw, requestsRaw, rental, costs, returnReviewRows] = await Promise.all([
     getDashboardData(profile), listDeliveries(profile), listInternalRequests(profile), getRentalSnapshot(), getCostSnapshot(profile),
+    sql<any[]>`SELECT count(*) FILTER (WHERE warehouse_review_status='pending')::int AS pending,count(*) FILTER (WHERE warehouse_review_status='feedback')::int AS feedback FROM supplier_returns WHERE status<>'cancelled'`,
   ]);
   const deliveries = deliveriesRaw as any[];
   const requests = requestsRaw as any[];
@@ -100,7 +101,8 @@ async function WarehouseManagerHome({ profile }: { profile: Profile }) {
   const review = requests.filter((r) => r.status === "executed_pending_review").length;
   const discrepancy = requests.filter((r) => Array.isArray(r.items) && r.items.some((i:any) => i.actual_qty != null && Number(i.actual_qty) !== Number(i.requested_qty))).length;
   const phc = deliveries.filter((d) => d.status === "phc_pending").length;
-  const actionTotal = pendingBorrow + review + phc;
+  const returnReview = Number(returnReviewRows[0]?.pending || 0) + Number(returnReviewRows[0]?.feedback || 0);
+  const actionTotal = pendingBorrow + review + phc + returnReview;
 
   return <div className="overview-page">
     <PageHeading title="Tổng quan" subtitle="Duyệt, hậu kiểm và các vấn đề cần chú ý của Kho Hậu cần."/>
@@ -115,7 +117,8 @@ async function WarehouseManagerHome({ profile }: { profile: Profile }) {
       <AttentionPanel items={[
         task(pendingBorrow, "Phiếu Mượn chờ duyệt", "/internal?type=borrow&status=pending", "Duyệt yêu cầu mượn", "warning"),
         task(review, "Phiếu chờ hậu kiểm", "/internal?status=executed_pending_review", "Đối chiếu yêu cầu / thực tế", "warning"),
-        task(phc, "Phiếu NCC chờ PHC", "/deliveries?status=phc_pending", "Xác nhận hoàn tất giao nhận", "info"),
+        task(phc, "Phiếu NCC chờ duyệt nhận", "/deliveries?status=phc_pending", "Trưởng kho duyệt nhận hàng", "info"),
+        task(returnReview, "Trả vỏ chờ hậu kiểm", "/deliveries?tab=returns", "Duyệt trả vỏ Nhà máy / Mỏ", "warning"),
         task(data.lowStock.length, "Loại khí tồn thấp", "/inventory", "Mở tồn kho để kiểm tra", "danger"),
       ]}/>
       <RentalPanel rental={rental} compact/>
@@ -140,13 +143,12 @@ async function StorekeeperHome({ profile }: { profile: Profile }) {
       <Metric icon={<Repeat2/>} label="Đổi chờ xử lý" value={exchange}/>
       <Metric icon={<Handshake/>} label="Mượn chờ xử lý" value={borrow}/>
       <Metric icon={<RotateCcw/>} label="Trả chờ nhận" value={returns}/>
-      <Metric icon={<Truck/>} label="NCC chờ PHC" value={phc}/>
+      <Metric icon={<Truck/>} label="NCC chờ Trưởng kho" value={phc}/>
     </MetricGrid>
     <AttentionPanel items={[
       task(exchange, "Phiếu Đổi chờ xử lý", "/internal?type=exchange&status=pending", "Nhập số lượng thực tế và hoàn tất", "info"),
       task(borrow, "Phiếu Mượn chờ xử lý", "/internal?type=borrow", "Cấp số lượng thực tế", "info"),
       task(returns, "Phiếu Trả chờ nhận", "/internal?type=return&status=pending", "Nhận chai trả về", "info"),
-      task(phc, "Phiếu NCC chờ PHC", "/deliveries?status=phc_pending", "Xác nhận hoàn tất giao nhận", "warning"),
       task(data.lowStock.length, "Loại khí tồn thấp", "/inventory", "Kiểm tra tồn đầy tại Kho", "danger"),
     ]}/>
     <QuickActions items={[
@@ -323,7 +325,7 @@ async function SupplierHome({ profile }: { profile: Profile }) {
     <PageHeading title="Tổng quan" subtitle="Theo dõi Phiếu giao, phản hồi và số vỏ đang cho NMBP thuê."/>
     <MetricGrid>
       <Metric icon={<Clock3/>} label="Chờ XSC" value={pendingXsc}/>
-      <Metric icon={<ClipboardCheck/>} label="Chờ PHC" value={pendingPhc}/>
+      <Metric icon={<ClipboardCheck/>} label="Chờ Trưởng kho" value={pendingPhc}/>
       <Metric icon={<MessageCircleWarning/>} label="Có phản hồi" value={feedback} tone={feedback ? "warning" : "success"}/>
       <Metric icon={<CheckCircle2/>} label="Hoàn tất" value={completed}/>
     </MetricGrid>
@@ -332,7 +334,7 @@ async function SupplierHome({ profile }: { profile: Profile }) {
       <RentalPanel rental={rental}/>
       <AttentionPanel items={[
         task(pendingXsc, "Phiếu chờ XSC", "/deliveries?status=pending", "Đang chờ xác nhận thực nhận", "info"),
-        task(pendingPhc, "Phiếu chờ PHC", "/deliveries?status=phc_pending", "Đang chờ hoàn tất", "warning"),
+        task(pendingPhc, "Phiếu chờ Trưởng kho", "/deliveries?status=phc_pending", "Đang chờ duyệt nhận hàng", "warning"),
         task(feedback, "Phiếu có phản hồi", "/deliveries?status=feedback", "Mở phiếu để xem nội dung", "danger"),
       ]}/>
     </div>
@@ -459,6 +461,6 @@ function RecentActivity({ deliveries = [], requests = [], transfers = [] }: { de
 }
 
 function dateLabel(value: string) { const [y,m,d] = value.split("-"); return `${d}/${m}/${y}`; }
-function deliveryStatus(status: string) { return status === "completed" ? "Hoàn tất" : status === "phc_pending" ? "Chờ PHC" : status === "feedback" ? "Có phản hồi" : "Chờ XSC"; }
+function deliveryStatus(status: string) { return status === "completed" ? "Hoàn tất" : status === "phc_pending" ? "Chờ Trưởng kho" : status === "feedback" ? "Có phản hồi" : "Chờ XSC"; }
 function internalType(type: string) { return type === "exchange" ? "Đổi" : type === "borrow" ? "Mượn" : "Trả"; }
 function internalStatus(status: string) { return status === "completed" ? "Hoàn tất" : status === "executed_pending_review" ? "Chờ duyệt" : status === "approved" ? "Đã duyệt" : status === "feedback" ? "Có phản hồi" : "Chờ xử lý"; }

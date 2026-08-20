@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireProfile } from "@/lib/auth/session";
 import { confirmDeliveryItem, createSupplierDelivery, finalizeDeliveryByPhc, resubmitDeliveryItem } from "@/lib/services/deliveries";
-import { createSupplierReturn, feedbackSupplierReturnItem } from "@/lib/services/supplier-returns";
+import { createSupplierReturn, feedbackSupplierReturnItem, reviewSupplierReturnByWarehouseManager } from "@/lib/services/supplier-returns";
 
 function back(request: Request, params: string) {
   return NextResponse.redirect(new URL(`/deliveries?${params}`, request.url), 303);
@@ -42,6 +42,16 @@ export async function POST(request: Request) {
     } else if (action === "feedback_supplier_return_item") {
       tab = "returns";
       await feedbackSupplierReturnItem(profile, String(form.get("item_id")), String(form.get("feedback") || ""));
+    } else if (action === "review_supplier_return") {
+      tab = String(form.get("return_tab") || "returns") === "deliveries" ? "deliveries" : "returns";
+      const decision = String(form.get("decision") || "");
+      if (decision !== "approve" && decision !== "feedback") throw new Error("Quyết định duyệt không hợp lệ");
+      await reviewSupplierReturnByWarehouseManager(
+        profile,
+        String(form.get("return_id")),
+        decision,
+        String(form.get("review_note") || ""),
+      );
     } else {
       throw new Error("Hành động không hợp lệ");
     }

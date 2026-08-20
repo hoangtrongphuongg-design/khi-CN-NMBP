@@ -99,8 +99,8 @@ export async function createSupplierReturn(profile: Profile, input: {
     const productById = new Map((validProducts as any[]).map((p) => [String(p.id), p]));
 
     const [ret] = await tx`
-      INSERT INTO supplier_returns(return_code,trip_id,supplier_org_id,return_date,source_location_id,status,note,created_by)
-      VALUES (('TMP-'||gen_random_uuid()::text),${delivery.trip_id}::uuid,${delivery.supplier_org_id}::uuid,${toDateKey(delivery.delivery_date)}::date,${loc.id}::uuid,'completed',${input.note || null},${profile.id}::uuid)
+      INSERT INTO supplier_returns(return_code,trip_id,supplier_org_id,return_date,source_location_id,status,note,created_by,warehouse_review_status)
+      VALUES (('TMP-'||gen_random_uuid()::text),${delivery.trip_id}::uuid,${delivery.supplier_org_id}::uuid,${toDateKey(delivery.delivery_date)}::date,${loc.id}::uuid,'completed',${input.note || null},${profile.id}::uuid,'pending')
       RETURNING id
     `;
     const code = stamp("TRA-NCC", ret.id, toDateKey(delivery.delivery_date));
@@ -255,11 +255,61 @@ export async function feedbackSupplierReturnItem(profile: Profile, itemId: strin
   });
 }
 
+export async function reviewSupplierReturnByWarehouseManager(
+  profile: Profile,
+  returnId: string,
+  decision: "approve" | "feedback",
+  note?: string,
+) {
+  if (profile.role !== "warehouse_manager") throw new Error("Chỉ Trưởng kho Hậu cần được duyệt hậu kiểm Phiếu trả vỏ NCC");
+  const reviewNote = String(note || "").trim();
+  if (decision === "feedback" && !reviewNote) throw new Error("Vui lòng nhập nội dung phản hồi");
+
+  await sql.begin(async (tx) => {
+    const [ret] = await tx`
+      SELECT id,return_code,status,warehouse_review_status,source_location_id
+      FROM supplier_returns
+      WHERE id=${returnId}::uuid
+      FOR UPDATE
+    `;
+    if (!ret) throw new Error("Không tìm thấy Phiếu trả vỏ");
+    if (ret.status === "cancelled") throw new Error("Phiếu trả vỏ đã hủy");
+
+    const before = {
+      warehouse_review_status: ret.warehouse_review_status,
+    };
+    const nextStatus = decision === "approve" ? "approved" : "feedback";
+
+    await tx`
+      UPDATE supplier_returns
+      SET warehouse_review_status=${nextStatus},
+          warehouse_review_note=${reviewNote || null},
+          warehouse_reviewed_by=${profile.id}::uuid,
+          warehouse_reviewed_at=now()
+      WHERE id=${returnId}::uuid
+    `;
+
+    await audit({
+      tx,
+      actorUserId: profile.id,
+      action: decision === "approve" ? "warehouse_review_approve" : "warehouse_review_feedback",
+      entityType: "supplier_return",
+      entityId: returnId,
+      before,
+      after: { warehouse_review_status: nextStatus, warehouse_review_note: reviewNote || null },
+      note: decision === "approve"
+        ? "Duyệt hậu kiểm; không phát sinh bút toán tồn vì tồn đã cập nhật khi Thủ kho/XSC Mỏ xác nhận trả vỏ."
+        : "Phản hồi hậu kiểm; không tự hoàn tác tồn kho.",
+    });
+  });
+}
+
 export async function listSupplierReturns(profile: Profile) {
   const supplierId = profile.role === "supplier" ? profile.organization_id : null;
   if (supplierId) {
     return sql`
       SELECT r.id,r.return_code,r.return_date,r.status,r.note,r.trip_id,l.name AS source_location,l.code AS source_location_code,t.trip_code,
+        r.warehouse_review_status,r.warehouse_review_note,r.warehouse_reviewed_at,wr.full_name AS warehouse_reviewed_by_name,
         d.delivery_code,
         COALESCE(json_agg(json_build_object(
           'id',ri.id,'product_id',ri.product_id,'product_name',p.name,'unit',p.unit,
@@ -268,6 +318,7 @@ export async function listSupplierReturns(profile: Profile) {
       FROM supplier_returns r
       JOIN locations l ON l.id=r.source_location_id
       LEFT JOIN transport_trips t ON t.id=r.trip_id
+      LEFT JOIN users wr ON wr.id=r.warehouse_reviewed_by
       LEFT JOIN LATERAL (
         SELECT sd.delivery_code FROM supplier_deliveries sd
         WHERE sd.trip_id=r.trip_id
@@ -276,12 +327,13 @@ export async function listSupplierReturns(profile: Profile) {
       LEFT JOIN supplier_return_items ri ON ri.supplier_return_id=r.id
       LEFT JOIN products p ON p.id=ri.product_id
       WHERE r.supplier_org_id=${supplierId}::uuid
-      GROUP BY r.id,l.name,l.code,t.trip_code,d.delivery_code
+      GROUP BY r.id,l.name,l.code,t.trip_code,d.delivery_code,wr.full_name
       ORDER BY r.return_date DESC,r.created_at DESC LIMIT 100
     `;
   }
   return sql`
     SELECT r.id,r.return_code,r.return_date,r.status,r.note,r.trip_id,l.name AS source_location,l.code AS source_location_code,t.trip_code,
+      r.warehouse_review_status,r.warehouse_review_note,r.warehouse_reviewed_at,wr.full_name AS warehouse_reviewed_by_name,
       d.delivery_code,
       COALESCE(json_agg(json_build_object(
         'id',ri.id,'product_id',ri.product_id,'product_name',p.name,'unit',p.unit,
@@ -290,6 +342,7 @@ export async function listSupplierReturns(profile: Profile) {
     FROM supplier_returns r
     JOIN locations l ON l.id=r.source_location_id
     LEFT JOIN transport_trips t ON t.id=r.trip_id
+    LEFT JOIN users wr ON wr.id=r.warehouse_reviewed_by
     LEFT JOIN LATERAL (
       SELECT sd.delivery_code FROM supplier_deliveries sd
       WHERE sd.trip_id=r.trip_id
@@ -297,7 +350,7 @@ export async function listSupplierReturns(profile: Profile) {
     ) d ON true
     LEFT JOIN supplier_return_items ri ON ri.supplier_return_id=r.id
     LEFT JOIN products p ON p.id=ri.product_id
-    GROUP BY r.id,l.name,l.code,t.trip_code,d.delivery_code
+    GROUP BY r.id,l.name,l.code,t.trip_code,d.delivery_code,wr.full_name
     ORDER BY r.return_date DESC,r.created_at DESC LIMIT 100
   `;
 }

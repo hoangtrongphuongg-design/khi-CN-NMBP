@@ -22,7 +22,7 @@ export async function getDashboardData(profile?: Profile): Promise<DashboardData
       SELECT (
         (SELECT count(*) FROM internal_requests WHERE status IN ('pending','approved','executed_pending_review','feedback')) +
         (SELECT count(*) FROM supplier_deliveries WHERE status IN ('pending','phc_pending','feedback')) +
-        (SELECT count(*) FROM supplier_returns WHERE status IN ('pending','feedback')) +
+        (SELECT count(*) FROM supplier_returns WHERE status IN ('pending','feedback') OR warehouse_review_status IN ('pending','feedback')) +
         (SELECT count(*) FROM transfers WHERE status='feedback')
       )::int AS count
     `,

@@ -148,7 +148,7 @@ export async function GET(request: Request) {
   wsSummary.addRows([
     {item:`Khoảng chọn ${reportWindow.requestedStartDate} → ${reportWindow.requestedEndDate}`,amount:null},
     {item: reportWindow.includesFuture ? `Chi phí thực tế tính đến ${reportWindow.asOfDate}` : `Chi phí thực tế đến ${reportWindow.requestedEndDate}`, amount:null},
-    {item:"Tiền mua khí (SL PHC xác nhận × đơn giá ngày giao)",amount:goodsCost},
+    {item:"Tiền mua khí (SL Trưởng kho duyệt × đơn giá ngày giao)",amount:goodsCost},
     {item:"Cước vận chuyển",amount:transportCost},
     {item:"Thuê vỏ chai (tổng vỏ-ngày theo từng loại)",amount:cylinderRentalCost},
     {item:"Phí lưu/thuê bồn XL-45 đã phát sinh",amount:xl45Cost},

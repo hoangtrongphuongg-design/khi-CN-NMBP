@@ -135,6 +135,16 @@ export async function confirmDeliveryItem(profile: Profile, itemId: string, actu
 
     if (action === "feedback") {
       if (!canFeedbackDelivery(profile)) throw new Error("Không có quyền phản hồi Phiếu giao");
+      if (item.status === "xsc_confirmed" && profile.role !== "warehouse_manager") {
+        throw new Error("Sau khi XSC xác nhận, chỉ Trưởng kho Hậu cần được phản hồi trước bước duyệt nhận hàng");
+      }
+      if (item.status === "pending") {
+        const allowedPendingFeedback =
+          profile.role === "warehouse_manager" ||
+          (item.location_code === "PLANT" && profile.role === "workshop") ||
+          (item.location_code === "MINE" && profile.role === "mine_xsc");
+        if (!allowedPendingFeedback) throw new Error("Không có quyền phản hồi dòng giao này");
+      }
       const wasXscConfirmed = item.status === "xsc_confirmed";
       await tx`
         UPDATE supplier_delivery_items
@@ -173,10 +183,10 @@ export async function confirmDeliveryItem(profile: Profile, itemId: string, actu
   });
 }
 
-// Bước 2: PHC xác nhận toàn Phiếu sau khi XSC đã xác nhận đủ các dòng.
+// Bước 2: Trưởng kho Hậu cần duyệt nhận hàng sau khi XSC đã xác nhận đủ các dòng.
 // Tại đây mới chốt đơn giá, cập nhật tồn và hoàn tất Phiếu.
 export async function finalizeDeliveryByPhc(profile: Profile, deliveryId: string) {
-  if (!canFinalizePhcDelivery(profile)) throw new Error("Chỉ PHC (Trưởng kho/Thủ kho) được xác nhận bước cuối");
+  if (!canFinalizePhcDelivery(profile)) throw new Error("Chỉ Trưởng kho Hậu cần được duyệt nhận hàng và hoàn tất Phiếu giao NCC");
   const lowStockProductIds = new Set<string>();
 
   await sql.begin(async (tx) => {
@@ -205,9 +215,9 @@ export async function finalizeDeliveryByPhc(profile: Profile, deliveryId: string
     const feedbackCount = (items as any[]).filter((item) => item.status === "feedback").length;
     const pendingCount = (items as any[]).filter((item) => item.status === "pending").length;
     const invalidCount = (items as any[]).filter((item) => !["xsc_confirmed", "confirmed", "feedback", "pending"].includes(item.status)).length;
-    if (feedbackCount > 0) throw new Error(`Còn ${feedbackCount} dòng đang có phản hồi, chưa thể PHC hoàn tất`);
+    if (feedbackCount > 0) throw new Error(`Còn ${feedbackCount} dòng đang có phản hồi, chưa thể Trưởng kho duyệt nhận hàng`);
     if (pendingCount > 0) throw new Error(`Còn ${pendingCount} dòng chưa được XSC xác nhận`);
-    if (invalidCount > 0) throw new Error("Trạng thái dòng giao chưa hợp lệ để PHC hoàn tất");
+    if (invalidCount > 0) throw new Error("Trạng thái dòng giao chưa hợp lệ để Trưởng kho duyệt nhận hàng");
 
     // Không phụ thuộc trạng thái cha bị trễ. Nếu tất cả dòng đã XSC xác nhận thì PHC được hoàn tất.
     const deliveryDate = toDateKey(delivery.delivery_date);

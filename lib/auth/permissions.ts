@@ -38,7 +38,11 @@ export function canConfirmPlantDelivery(profile: Profile) {
 }
 
 export function canFinalizePhcDelivery(profile: Profile) {
-  return ["warehouse_manager","storekeeper"].includes(profile.role);
+  return profile.role === "warehouse_manager";
+}
+
+export function canReviewSupplierReturn(profile: Profile) {
+  return profile.role === "warehouse_manager";
 }
 
 export function canConfirmMineDelivery(profile: Profile) {

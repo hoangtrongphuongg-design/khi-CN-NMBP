@@ -39,3 +39,13 @@
 - Sửa thời gian PHC hoàn tất trên trang Giao nhận NCC về múi giờ `Asia/Ho_Chi_Minh` (GMT+7).
 - Chỉ sửa cách hiển thị timestamp; không thay đổi dữ liệu lịch sử trong Neon, nghiệp vụ, quyền hoặc giao diện đã khóa.
 - Không có SQL mới.
+
+
+## V1.0.35
+- Baseline: V1.0.33.
+- Chỉ Trưởng kho Hậu cần được duyệt nhận hàng NCC / hoàn tất Phiếu giao.
+- Thủ kho và XSC Mỏ vẫn cập nhật tồn ngay khi xác nhận trả vỏ cùng chuyến.
+- Bổ sung hậu kiểm Phiếu trả vỏ: Chờ duyệt / Đã duyệt / Trưởng kho phản hồi.
+- Trưởng kho có tác vụ riêng cho duyệt nhận hàng và hậu kiểm trả vỏ Nhà máy/Mỏ.
+- Phản hồi hậu kiểm không tự đảo tồn kho.
+- SQL 14 bổ sung trường hậu kiểm trên supplier_returns.

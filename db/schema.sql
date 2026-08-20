@@ -247,8 +247,14 @@ CREATE TABLE IF NOT EXISTS supplier_returns (
   created_at timestamptz NOT NULL DEFAULT now(),
   created_by uuid NOT NULL REFERENCES users(id),
   supplier_confirmed_by uuid REFERENCES users(id),
-  supplier_confirmed_at timestamptz
+  supplier_confirmed_at timestamptz,
+  warehouse_review_status text NOT NULL DEFAULT 'pending' CHECK (warehouse_review_status IN ('pending','approved','feedback')),
+  warehouse_review_note text,
+  warehouse_reviewed_by uuid REFERENCES users(id),
+  warehouse_reviewed_at timestamptz
 );
+
+CREATE INDEX IF NOT EXISTS supplier_returns_review_idx ON supplier_returns(warehouse_review_status,return_date DESC);
 
 CREATE TABLE IF NOT EXISTS supplier_return_items (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
