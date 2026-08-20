@@ -56,7 +56,7 @@ export function DeliveryCreateForm({ products, locations, today }: { products: P
     setterFor(zone)((old) => old.filter((x) => x.key !== key));
   }
 
-  function ZoneCard({ zone, title, hint }: { zone: Zone; title: string; hint: string }) {
+  function renderZoneCard(zone: Zone, title: string, hint: string) {
     const current = linesFor(zone);
     const icon = zone === "PLANT" ? <Warehouse size={19}/> : <MapPin size={19}/>;
     return <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-white">
@@ -94,8 +94,8 @@ export function DeliveryCreateForm({ products, locations, today }: { products: P
     </div>
 
     <div className="grid gap-3 xl:grid-cols-2">
-      <ZoneCard zone="PLANT" title="Giao Nhà máy" hint="Nhập các loại khí giao tại Nhà máy Xi măng Bình Phước" />
-      <ZoneCard zone="MINE" title="Giao Mỏ Tà Thiết" hint="Nhập các loại khí giao tại Mỏ; nếu có số liệu Mỏ thì cả chuyến áp dụng cước Mỏ" />
+      {renderZoneCard("PLANT", "Giao Nhà máy", "Nhập các loại khí giao tại Nhà máy Xi măng Bình Phước")}
+      {renderZoneCard("MINE", "Giao Mỏ Tà Thiết", "Nhập các loại khí giao tại Mỏ; nếu có số liệu Mỏ thì cả chuyến áp dụng cước Mỏ")}
     </div>
 
     <div className={`rounded-xl border px-4 py-3 text-sm ${hasMine ? "border-orange-200 bg-orange-50" : "border-blue-100 bg-blue-50"}`}>

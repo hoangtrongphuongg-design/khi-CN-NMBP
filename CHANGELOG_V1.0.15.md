@@ -25,3 +25,10 @@
 - Cho phép xóa sạch ô số lượng và nhập số nhiều chữ số bình thường, không auto-tab.
 - Mobile ưu tiên bàn phím số (`numeric`) hoặc bàn phím số thập phân (`decimal`) theo loại dữ liệu.
 - Giữ nguyên toàn bộ layout/role/business flow đã khóa; không có SQL mới.
+
+
+## V1.0.32
+- Sửa lỗi mất focus sau ký tự đầu tiên ở form Tạo phiếu giao NCC trên desktop/mobile.
+- Nguyên nhân: component vùng giao được khai báo lồng bên trong DeliveryCreateForm, khiến React remount vùng nhập sau mỗi lần cập nhật state.
+- Chuyển sang render helper ổn định, không còn tự rời ô/tự nhảy sang ô khác khi đang gõ số nhiều chữ số.
+- Rà soát mã nguồn: không có autoFocus, focus(), maxLength=1 hoặc logic tự chuyển ô trong các form số lượng khác.

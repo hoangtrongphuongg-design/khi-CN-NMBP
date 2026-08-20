@@ -410,3 +410,11 @@ Có cơ cấu chi phí, xu hướng, top loại khí, bảng tổng hợp theo l
 - Nút `+/-` vẫn giữ nguyên bố cục đã khóa; nếu ô đang trống và người dùng bấm `+`, giá trị bắt đầu từ 1.
 - Áp dụng cho các luồng tạo Phiếu giao NCC, trả vỏ cùng chuyến, Đổi/Mượn/Trả của nhóm và Điều chuyển Nhà máy ↔ Mỏ. Component Input chung cũng tự ưu tiên bàn phím số/decimal cho các trường `type=number` còn lại.
 - Không thay đổi layout mobile/desktop, quyền, nghiệp vụ, database hoặc các giao diện đã khóa chốt.
+
+
+### Chuẩn nhập số lượng (V1.0.32)
+- Không tự chuyển focus/tab sau khi nhập một chữ số.
+- Người dùng phải nhập liên tục được các giá trị như 3, 30, 125 trong cùng một ô.
+- Chỉ đổi focus khi người dùng chủ động chạm/click/Tab/Next.
+- Mobile ưu tiên bàn phím số thông qua inputMode phù hợp.
+- Không dùng autoFocus/focus tự động/maxLength=1 cho ô số lượng.
