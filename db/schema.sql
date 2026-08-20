@@ -381,6 +381,26 @@ CREATE TABLE IF NOT EXISTS notification_outbox (
 );
 CREATE INDEX IF NOT EXISTS notification_outbox_pending_idx ON notification_outbox(status, created_at);
 
+CREATE TABLE IF NOT EXISTS data_correction_requests (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  request_code text NOT NULL UNIQUE,
+  target_type text NOT NULL CHECK (target_type IN ('supplier_delivery','supplier_return')),
+  target_id uuid NOT NULL,
+  reason text NOT NULL,
+  requested_change text NOT NULL,
+  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','completed','rejected')),
+  requested_at timestamptz NOT NULL DEFAULT now(),
+  requested_by uuid NOT NULL REFERENCES users(id),
+  handled_at timestamptz,
+  handled_by uuid REFERENCES users(id),
+  admin_note text,
+  adjustment_id uuid
+);
+CREATE UNIQUE INDEX IF NOT EXISTS data_correction_requests_one_pending_uq
+  ON data_correction_requests(target_type,target_id) WHERE status='pending';
+CREATE INDEX IF NOT EXISTS data_correction_requests_status_idx
+  ON data_correction_requests(status,requested_at DESC);
+
 CREATE TABLE IF NOT EXISTS adjustment_notes (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   adjustment_code text NOT NULL UNIQUE,

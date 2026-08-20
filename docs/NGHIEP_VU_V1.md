@@ -418,3 +418,20 @@ Có cơ cấu chi phí, xu hướng, top loại khí, bảng tổng hợp theo l
 - Chỉ đổi focus khi người dùng chủ động chạm/click/Tab/Next.
 - Mobile ưu tiên bàn phím số thông qua inputMode phù hợp.
 - Không dùng autoFocus/focus tự động/maxLength=1 cho ô số lượng.
+
+
+### Chuẩn thời gian hiển thị
+- Mọi timestamp hiển thị cho người dùng tại NMBP dùng múi giờ `Asia/Ho_Chi_Minh` (GMT+7).
+- Timestamp trong database giữ nguyên chuẩn lưu trữ; không dịch/chỉnh dữ liệu lịch sử bằng SQL chỉ để thay đổi cách hiển thị.
+
+## Đề nghị sửa dữ liệu NCC sau hoàn tất (V1.0.34)
+
+- Phiếu giao NCC / Phiếu trả vỏ sau khi hoàn tất không bị xóa.
+- Chỉ `workshop` và `warehouse_manager` được tạo **Đề nghị sửa số liệu**; đề nghị phải ghi lý do và số liệu thực tế đúng.
+- Chỉ `admin` được xử lý đề nghị: sửa số lượng dòng hiện có, bổ sung tối đa 3 loại còn thiếu trong một lần xử lý hoặc từ chối có lý do.
+- Admin xử lý bằng bút toán điều chỉnh có audit: giữ phiếu gốc, ghi `adjustment_notes`, cập nhật tồn tương ứng và cập nhật snapshot số lượng/chi phí của dòng đã hoàn tất.
+- Điều chỉnh Phiếu giao giữ nguyên tuyến/cước chuyến gốc; chỉ được bổ sung dòng ở địa điểm mà chuyến gốc thực sự đã đi qua.
+- Điều chỉnh Phiếu trả không tạo thêm cước. Nếu giảm/tăng số vỏ trả, stock ledger ghi bút toán ngược/thuận tại đúng ngày nghiệp vụ để số vỏ thuê và tiền thuê được tính lại.
+- XL-45 được cập nhật cả lot/return allocation; không cho giảm số giao thấp hơn số bồn đã trả theo lịch sử.
+- Dữ liệu NCC không có chức năng xóa trực tiếp.
+

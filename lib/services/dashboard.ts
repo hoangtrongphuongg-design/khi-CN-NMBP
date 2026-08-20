@@ -159,11 +159,11 @@ export async function getRentalSnapshot(): Promise<RentalSnapshot> {
       p.display_order,
       COALESCE(ob.qty,0)::float8 AS opening_qty,
       COALESCE(SUM(CASE
-        WHEN sl.reference_type IN ('supplier_delivery','supplier_delivery_mine') AND sl.delta>0 THEN sl.delta
+        WHEN sl.reference_type IN ('supplier_delivery','supplier_delivery_mine') THEN sl.delta
         ELSE 0
       END),0)::float8 AS supplier_in,
       COALESCE(SUM(CASE
-        WHEN sl.reference_type='supplier_return' AND sl.delta<0 THEN -sl.delta
+        WHEN sl.reference_type='supplier_return' THEN -sl.delta
         ELSE 0
       END),0)::float8 AS supplier_out
     FROM products p

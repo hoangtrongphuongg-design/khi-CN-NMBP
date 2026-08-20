@@ -32,3 +32,18 @@
 - Nguyên nhân: component vùng giao được khai báo lồng bên trong DeliveryCreateForm, khiến React remount vùng nhập sau mỗi lần cập nhật state.
 - Chuyển sang render helper ổn định, không còn tự rời ô/tự nhảy sang ô khác khi đang gõ số nhiều chữ số.
 - Rà soát mã nguồn: không có autoFocus, focus(), maxLength=1 hoặc logic tự chuyển ô trong các form số lượng khác.
+
+
+## V1.0.33 — Chuẩn hóa múi giờ Việt Nam
+- Sửa thời gian XSC xác nhận trên trang Giao nhận NCC về múi giờ `Asia/Ho_Chi_Minh` (GMT+7).
+- Sửa thời gian PHC hoàn tất trên trang Giao nhận NCC về múi giờ `Asia/Ho_Chi_Minh` (GMT+7).
+- Chỉ sửa cách hiển thị timestamp; không thay đổi dữ liệu lịch sử trong Neon, nghiệp vụ, quyền hoặc giao diện đã khóa.
+- Không có SQL mới.
+
+## V1.0.34 — Đề nghị sửa dữ liệu NCC sau hoàn tất
+- Workshop/Trưởng kho có nút tạo Đề nghị sửa cho Phiếu giao hoặc Phiếu trả vỏ.
+- Admin có tab Đề nghị sửa để xem, nhập số đúng, bổ sung loại còn thiếu, áp dụng hoặc từ chối.
+- Mọi điều chỉnh ghi audit + adjustment note, không xóa Phiếu gốc.
+- Tồn, số vỏ thuê, mua khí và XL-45 được cập nhật theo chênh lệch thực tế.
+- Có migration SQL 13; phải chạy SQL trước khi deploy code V1.0.34.
+

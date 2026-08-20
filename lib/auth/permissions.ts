@@ -60,3 +60,7 @@ export function canFeedbackDelivery(profile: Profile) {
 export function canViewCostReports(profile: Profile) {
   return ["workshop", "warehouse_manager", "management_board", "supplier"].includes(profile.role);
 }
+export function canRequestDataCorrection(profile: Profile) {
+  return ["workshop", "warehouse_manager"].includes(profile.role);
+}
+
