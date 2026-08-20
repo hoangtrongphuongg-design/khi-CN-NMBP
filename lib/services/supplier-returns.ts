@@ -1,6 +1,6 @@
 import { sql } from "@/lib/db";
 import type { Profile } from "@/types/app";
-import { applyStockDelta, audit, getStockPointByCode } from "@/lib/stock";
+import { applyStockDelta, audit, getStockPointByCode, getSystemOperationState, recordHistoricalSupplierMovement } from "@/lib/stock";
 import { toDateKey } from "@/lib/utils";
 
 function stamp(prefix: string, id: string, date: string) {
@@ -68,9 +68,18 @@ async function applySupplierReturnDifference(params: {
   diff: number;
   actorUserId: string;
   occurredDate: string;
+  historicalImport?: boolean;
 }) {
-  const { tx, returnId, product, locationCode, stockPointId, diff, actorUserId, occurredDate } = params;
+  const { tx, returnId, product, locationCode, stockPointId, diff, actorUserId, occurredDate, historicalImport } = params;
   if (Math.abs(diff) < 0.000001) return;
+
+  if (historicalImport) {
+    await recordHistoricalSupplierMovement({
+      tx, productId: product.id, delta: -diff, referenceType: "supplier_return_revision", referenceId: returnId, actorUserId, occurredDate,
+      note: "Điều chỉnh hồi nhập trả vỏ NCC sau phản hồi; không cập nhật tồn vật lý",
+    });
+    return;
+  }
 
   if (locationCode === "MINE") {
     await applyStockDelta({
@@ -159,6 +168,11 @@ export async function createSupplierReturn(profile: Profile, input: {
     if (!delivery) throw new Error("Không tìm thấy Phiếu giao NCC");
     if (!delivery.trip_id) throw new Error("Phiếu giao chưa có chuyến vận chuyển");
     if (delivery.status === "cancelled") throw new Error("Phiếu giao đã hủy, không thể trả vỏ cùng chuyến");
+    const operationState = await getSystemOperationState(tx);
+    if (operationState.mode === "live" && operationState.go_live_date && toDateKey(delivery.delivery_date) < toDateKey(operationState.go_live_date)) {
+      throw new Error(`Hệ thống đã vận hành chính thức từ ${toDateKey(operationState.go_live_date)}; không nhập trả vỏ lịch sử trước mốc này bằng luồng vận hành.`);
+    }
+    const historicalImport = operationState.mode === "historical_import";
 
     const allowedLocationCode = profile.role === "mine_xsc" ? "MINE" : "PLANT";
     const [loc] = await tx`
@@ -198,8 +212,8 @@ export async function createSupplierReturn(profile: Profile, input: {
     const code = stamp("TRA-NCC", ret.id, toDateKey(delivery.delivery_date));
     await tx`UPDATE supplier_returns SET return_code=${code} WHERE id=${ret.id}`;
 
-    const wh = loc.code === "PLANT" ? await getStockPointByCode("WH-PHC", tx) : null;
-    const [mine] = loc.code === "MINE"
+    const wh = !historicalImport && loc.code === "PLANT" ? await getStockPointByCode("WH-PHC", tx) : null;
+    const [mine] = !historicalImport && loc.code === "MINE"
       ? await tx`SELECT sp.id FROM stock_points sp JOIN work_groups g ON g.id=sp.group_id WHERE g.code='COI' LIMIT 1`
       : [null];
 
@@ -213,9 +227,15 @@ export async function createSupplierReturn(profile: Profile, input: {
       `;
 
       const pointId = loc.code === "MINE" ? mine?.id : wh?.id;
-      if (!pointId) throw new Error("Chưa cấu hình điểm tồn để trả vỏ");
-
-      if (loc.code === "MINE") {
+      if (historicalImport) {
+        await recordHistoricalSupplierMovement({
+          tx, productId: line.productId, delta: -quantity, referenceType: "supplier_return", referenceId: ret.id,
+          actorUserId: profile.id, occurredDate: toDateKey(delivery.delivery_date),
+          note: `Hồi nhập trả vỏ ${loc.code === "MINE" ? "Mỏ" : "Nhà máy"} cùng chuyến ${delivery.delivery_code}; không cập nhật tồn vật lý`,
+        });
+      } else if (!pointId) {
+        throw new Error("Chưa cấu hình điểm tồn để trả vỏ");
+      } else if (loc.code === "MINE") {
         await applyStockDelta({
           tx,
           stockPointId: pointId,
@@ -365,12 +385,14 @@ export async function reviseSupplierReturn(profile: Profile, returnId: string, i
       if (!product?.active || !product?.returnable_container) throw new Error("Có loại không hợp lệ để trả vỏ NCC");
     }
 
-    const wh = ret.location_code === "PLANT" ? await getStockPointByCode("WH-PHC", tx) : null;
-    const [mine] = ret.location_code === "MINE"
+    const operationState = await getSystemOperationState(tx);
+    const historicalImport = operationState.mode === "historical_import";
+    const wh = !historicalImport && ret.location_code === "PLANT" ? await getStockPointByCode("WH-PHC", tx) : null;
+    const [mine] = !historicalImport && ret.location_code === "MINE"
       ? await tx`SELECT sp.id FROM stock_points sp JOIN work_groups g ON g.id=sp.group_id WHERE g.code='COI' LIMIT 1`
       : [null];
     const pointId = ret.location_code === "MINE" ? mine?.id : wh?.id;
-    if (!pointId) throw new Error("Chưa cấu hình điểm tồn để điều chỉnh trả vỏ");
+    if (!historicalImport && !pointId) throw new Error("Chưa cấu hình điểm tồn để điều chỉnh trả vỏ");
     const occurredDate = toDateKey(ret.return_date);
 
     const oldMap = new Map((oldItems as any[]).map((item:any) => [String(item.product_id), item]));
@@ -387,8 +409,8 @@ export async function reviseSupplierReturn(profile: Profile, returnId: string, i
 
       if (diff !== 0) {
         await applySupplierReturnDifference({
-          tx, returnId, product, locationCode: ret.location_code, stockPointId: pointId,
-          diff, actorUserId: profile.id, occurredDate,
+          tx, returnId, product, locationCode: ret.location_code, stockPointId: pointId || "00000000-0000-0000-0000-000000000000",
+          diff, actorUserId: profile.id, occurredDate, historicalImport,
         });
       }
 

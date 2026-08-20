@@ -72,3 +72,7 @@ npm run build
 ```
 
 Health endpoint: `/api/health`.
+
+
+### Nâng cấp V1.0.38
+Chạy `15_KIEM_KE_CHOT_VAN_HANH.sql` trên Neon trước khi deploy code V1.0.38. SQL chỉ tạo cấu trúc chốt vận hành + điểm ledger lịch sử ẩn, không tự thay đổi số tồn hiện có.

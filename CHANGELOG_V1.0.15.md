@@ -1,3 +1,11 @@
+
+## V1.0.38 - Kiểm kê & chốt vận hành
+- Admin có tab Kiểm kê & chốt vận hành.
+- Trước khi chốt: chế độ Hồi nhập lịch sử NCC; giao/trả phục vụ chi phí + nợ vỏ nhưng không ép tồn vật lý.
+- Nhập kiểm kê Kho Hậu cần (đầy/rỗng), từng nhóm và Mỏ/Nhóm Cối.
+- Đối chiếu tự động số vỏ theo NCC với tổng kiểm kê theo từng loại.
+- Chốt một lần: đặt tồn vật lý theo kiểm kê, lưu audit và chuyển sang Vận hành chính thức.
+- Sau mốc vận hành, chặn nhập Phiếu NCC có ngày trước ngày go-live bằng luồng vận hành thông thường.
 # V1.0.15 — Giao diện nhóm + phiếu nội bộ nhiều loại khí
 
 - Trang Tổng quan của Đốc công/Giám sát/Công nhân chỉ hiện loại khí có số lượng > 0.

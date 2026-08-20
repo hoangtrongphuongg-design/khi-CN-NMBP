@@ -1,10 +1,10 @@
 import bcrypt from "bcryptjs";
 import { sql } from "@/lib/db";
-import { audit } from "@/lib/stock";
+import { applyStockDelta, audit } from "@/lib/stock";
 import { closePreviousPriceRule, type PriceType } from "@/lib/pricing";
 import type { Profile, AppRole } from "@/types/app";
 import { checkLowStock } from "@/lib/notifications/low-stock";
-import { toDateKey } from "@/lib/utils";
+import { toDateInput, toDateKey } from "@/lib/utils";
 
 function assertAdmin(profile: Profile) {
   if (profile.role !== "admin") throw new Error("Chỉ Admin được thay đổi cấu hình hệ thống");
@@ -271,7 +271,6 @@ export async function setStockBalance(profile: Profile, stockPointId: string, pr
   const before = Number(current?.qty ?? 0);
   const delta = targetQty - before;
   if (Math.abs(delta) < 0.000001) return;
-  const { applyStockDelta } = await import("@/lib/stock");
   await applyStockDelta({ stockPointId, productId, bucket, delta, referenceType: "admin_stock_set", note: "Admin thiết lập số dư", actorUserId: profile.id });
   await audit({ actorUserId: profile.id, action: "set_stock", entityType: "stock_balance", before: { qty: before }, after: { stockPointId, productId, bucket, qty: targetQty } });
   if (point.kind === "warehouse" && bucket === "full") await checkLowStock(productId);
@@ -333,4 +332,254 @@ export async function listAuditLogs(limit = 300) {
     ORDER BY a.created_at DESC
     LIMIT ${limit}
   `;
+}
+
+
+export type CutoverCountInput = {
+  stockPointId: string;
+  productId: string;
+  bucket: "full" | "empty" | "available" | "managed";
+  qty: number;
+};
+
+async function expectedCutoverKeys(tx: any = sql) {
+  return tx`
+    SELECT sp.id AS stock_point_id,p.id AS product_id,'full'::text AS bucket
+    FROM stock_points sp CROSS JOIN products p
+    WHERE sp.active AND sp.kind='warehouse' AND p.active AND p.returnable_container AND p.warehouse_split_full_empty
+    UNION ALL
+    SELECT sp.id,p.id,'empty'::text
+    FROM stock_points sp CROSS JOIN products p
+    WHERE sp.active AND sp.kind='warehouse' AND p.active AND p.returnable_container AND p.warehouse_split_full_empty
+    UNION ALL
+    SELECT sp.id,p.id,'available'::text
+    FROM stock_points sp CROSS JOIN products p
+    WHERE sp.active AND sp.kind='warehouse' AND p.active AND p.returnable_container AND NOT p.warehouse_split_full_empty
+    UNION ALL
+    SELECT sp.id,p.id,'managed'::text
+    FROM stock_points sp CROSS JOIN products p
+    LEFT JOIN work_groups g ON g.id=sp.group_id
+    WHERE sp.active AND sp.kind='group' AND p.active AND p.returnable_container
+      AND (p.internal_group_tracking OR g.code='COI')
+  `;
+}
+
+async function supplierContainerSnapshotAt(dateKey: string, cutoverId?: string | null, tx: any = sql) {
+  return tx`
+    WITH counted AS (
+      SELECT product_id,COALESCE(SUM(counted_qty),0)::numeric AS counted_qty
+      FROM inventory_cutover_items
+      WHERE cutover_id=${cutoverId ?? null}::uuid
+      GROUP BY product_id
+    )
+    SELECT p.id AS product_id,p.code AS product_code,p.name AS product_name,p.unit,p.display_order,
+      GREATEST(0,COALESCE(opening.qty,0)+COALESCE(mv.net_delta,0))::float8 AS supplier_qty,
+      COALESCE(c.counted_qty,0)::float8 AS counted_qty,
+      (COALESCE(c.counted_qty,0)-GREATEST(0,COALESCE(opening.qty,0)+COALESCE(mv.net_delta,0)))::float8 AS difference
+    FROM products p
+    LEFT JOIN LATERAL (
+      SELECT ob.opening_date,ob.qty
+      FROM supplier_container_opening_balances ob
+      WHERE ob.product_id=p.id AND ob.opening_date<=${dateKey}::date
+      ORDER BY ob.opening_date DESC LIMIT 1
+    ) opening ON true
+    LEFT JOIN LATERAL (
+      SELECT COALESCE(SUM(CASE
+        WHEN sl.reference_type IN ('supplier_delivery','supplier_delivery_mine') AND sl.delta>0 THEN sl.delta
+        WHEN sl.reference_type='supplier_return' AND sl.delta<0 THEN sl.delta
+        WHEN sl.reference_type='supplier_return_revision' THEN sl.delta
+        ELSE 0 END),0)::numeric AS net_delta
+      FROM stock_ledger sl
+      WHERE sl.product_id=p.id
+        AND sl.occurred_at >= COALESCE(
+          (opening.opening_date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'),
+          '1900-01-01 00:00:00+07'::timestamptz)
+        AND sl.occurred_at < ((${dateKey}::date + interval '1 day') AT TIME ZONE 'Asia/Ho_Chi_Minh')
+    ) mv ON true
+    LEFT JOIN counted c ON c.product_id=p.id
+    WHERE p.active AND p.returnable_container
+    ORDER BY p.display_order,p.name
+  `;
+}
+
+export async function getInventoryCutoverAdminData() {
+  const [state] = await sql`
+    SELECT s.mode,s.stocktake_date,s.go_live_date,s.active_cutover_id,s.updated_at,
+      c.id AS finalized_cutover_id,c.note AS finalized_note,c.discrepancy_reason,c.finalized_at,
+      u.full_name AS finalized_by_name
+    FROM system_operation_state s
+    LEFT JOIN inventory_cutovers c ON c.id=s.active_cutover_id
+    LEFT JOIN users u ON u.id=c.finalized_by
+    WHERE s.id=1 LIMIT 1
+  `;
+  const [draft] = await sql`
+    SELECT c.id,c.stocktake_date,c.go_live_date,c.note,c.created_at,c.updated_at,u.full_name AS created_by_name
+    FROM inventory_cutovers c LEFT JOIN users u ON u.id=c.created_by
+    WHERE c.status='draft' ORDER BY c.updated_at DESC LIMIT 1
+  `;
+  const snapshotDate = draft?.stocktake_date ? toDateKey(draft.stocktake_date) : toDateInput();
+  const items = draft ? await sql`
+    SELECT stock_point_id,product_id,bucket,counted_qty::float8 AS counted_qty
+    FROM inventory_cutover_items WHERE cutover_id=${draft.id}::uuid
+  ` : [];
+  const supplierRows = await supplierContainerSnapshotAt(snapshotDate, draft?.id ?? null);
+  const [pending] = await sql`
+    SELECT
+      (SELECT count(*) FROM supplier_deliveries WHERE delivery_date<=${snapshotDate}::date AND status NOT IN ('completed','cancelled'))::int AS delivery_pending,
+      (SELECT count(*) FROM supplier_returns WHERE return_date<=${snapshotDate}::date AND status<>'cancelled' AND (status<>'completed' OR warehouse_review_status<>'approved'))::int AS return_pending
+  `;
+  return {
+    state: state ?? { mode: "historical_import", stocktake_date: null, go_live_date: null },
+    draft: draft ?? null,
+    items,
+    supplierRows,
+    snapshotDate,
+    pending: pending ?? { delivery_pending: 0, return_pending: 0 },
+  };
+}
+
+export async function saveInventoryCutoverDraft(profile: Profile, input: {
+  stocktakeDate: string;
+  goLiveDate: string;
+  note?: string | null;
+  counts: CutoverCountInput[];
+}) {
+  assertAdmin(profile);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.stocktakeDate) || !/^\d{4}-\d{2}-\d{2}$/.test(input.goLiveDate)) throw new Error("Ngày kiểm kê/vận hành không hợp lệ");
+  if (input.goLiveDate <= input.stocktakeDate) throw new Error("Ngày vận hành chính thức phải sau ngày kiểm kê");
+  if (!input.counts.length) throw new Error("Chưa có số liệu kiểm kê");
+  if (input.counts.some((x) => !Number.isFinite(x.qty) || x.qty < 0)) throw new Error("Số kiểm kê không được âm");
+
+  return sql.begin(async (tx) => {
+    const [state] = await tx`SELECT mode FROM system_operation_state WHERE id=1 FOR UPDATE`;
+    if (!state) throw new Error("Chưa chạy SQL 15");
+    if (state.mode === "live") throw new Error("Hệ thống đã chốt vận hành; không thể tạo lại kiểm kê chuyển đổi");
+
+    const expected = await expectedCutoverKeys(tx);
+    const expectedSet = new Set((expected as any[]).map((x:any)=>`${x.stock_point_id}:${x.product_id}:${x.bucket}`));
+    const supplied = new Map<string,CutoverCountInput>();
+    for (const item of input.counts) {
+      const key = `${item.stockPointId}:${item.productId}:${item.bucket}`;
+      if (!expectedSet.has(key)) throw new Error("Có dòng kiểm kê không hợp lệ");
+      if (supplied.has(key)) throw new Error("Dữ liệu kiểm kê bị trùng dòng");
+      supplied.set(key,item);
+    }
+    if (supplied.size !== expectedSet.size) throw new Error("Vui lòng nhập đủ toàn bộ Kho Hậu cần, các nhóm và Mỏ trước khi lưu kiểm kê");
+
+    let [draft] = await tx`SELECT id FROM inventory_cutovers WHERE status='draft' LIMIT 1 FOR UPDATE`;
+    if (!draft) {
+      [draft] = await tx`
+        INSERT INTO inventory_cutovers(stocktake_date,go_live_date,note,created_by)
+        VALUES (${input.stocktakeDate}::date,${input.goLiveDate}::date,${input.note || null},${profile.id}::uuid)
+        RETURNING id
+      `;
+    } else {
+      await tx`
+        UPDATE inventory_cutovers SET stocktake_date=${input.stocktakeDate}::date,go_live_date=${input.goLiveDate}::date,
+          note=${input.note || null},updated_at=now()
+        WHERE id=${draft.id}::uuid
+      `;
+      await tx`DELETE FROM inventory_cutover_items WHERE cutover_id=${draft.id}::uuid`;
+    }
+
+    for (const item of supplied.values()) {
+      await tx`
+        INSERT INTO inventory_cutover_items(cutover_id,stock_point_id,product_id,bucket,counted_qty)
+        VALUES (${draft.id}::uuid,${item.stockPointId}::uuid,${item.productId}::uuid,${item.bucket},${item.qty})
+      `;
+    }
+    await audit({ tx, actorUserId: profile.id, action: "save_draft", entityType: "inventory_cutover", entityId: draft.id,
+      after: { stocktakeDate: input.stocktakeDate, goLiveDate: input.goLiveDate, itemCount: supplied.size, note: input.note || null },
+      note: "Lưu số kiểm kê chuyển đổi; chưa thay đổi tồn kho thực tế." });
+    return draft.id as string;
+  });
+}
+
+export async function finalizeInventoryCutover(profile: Profile, cutoverId: string, discrepancyReason?: string | null) {
+  assertAdmin(profile);
+  const lowStockProducts = new Set<string>();
+  await sql.begin(async (tx) => {
+    const [state] = await tx`SELECT mode FROM system_operation_state WHERE id=1 FOR UPDATE`;
+    if (!state) throw new Error("Chưa chạy SQL 15");
+    if (state.mode === "live") throw new Error("Hệ thống đã được chốt vận hành trước đó");
+    const [cutover] = await tx`
+      SELECT * FROM inventory_cutovers WHERE id=${cutoverId}::uuid AND status='draft' FOR UPDATE
+    `;
+    if (!cutover) throw new Error("Không tìm thấy bản kiểm kê nháp");
+    const stocktakeDate = toDateKey(cutover.stocktake_date);
+    const goLiveDate = toDateKey(cutover.go_live_date);
+    if (stocktakeDate > toDateInput()) throw new Error("Chưa đến ngày kiểm kê; không thể chốt vận hành trước ngày kiểm kê thực tế");
+
+    const [pending] = await tx`
+      SELECT
+        (SELECT count(*) FROM supplier_deliveries WHERE delivery_date<=${stocktakeDate}::date AND status NOT IN ('completed','cancelled'))::int AS delivery_pending,
+        (SELECT count(*) FROM supplier_returns WHERE return_date<=${stocktakeDate}::date AND status<>'cancelled' AND (status<>'completed' OR warehouse_review_status<>'approved'))::int AS return_pending
+    `;
+    if (Number(pending?.delivery_pending || 0) > 0 || Number(pending?.return_pending || 0) > 0) {
+      throw new Error(`Còn ${Number(pending?.delivery_pending || 0)} Phiếu giao và ${Number(pending?.return_pending || 0)} Phiếu trả chưa hoàn tất/duyệt đến ngày kiểm kê`);
+    }
+
+    const expected = await expectedCutoverKeys(tx);
+    const items = await tx`
+      SELECT stock_point_id,product_id,bucket,counted_qty::float8 AS counted_qty
+      FROM inventory_cutover_items WHERE cutover_id=${cutoverId}::uuid
+      FOR UPDATE
+    `;
+    if (items.length !== expected.length) throw new Error("Bản kiểm kê chưa đủ điểm tồn/loại khí; hãy lưu lại kiểm kê trước khi chốt");
+
+    const comparison = await supplierContainerSnapshotAt(stocktakeDate, cutoverId, tx);
+    const hasDifference = (comparison as any[]).some((x:any)=>Math.abs(Number(x.difference || 0)) > 0.000001);
+    const reason = String(discrepancyReason || "").trim();
+    if (hasDifference && !reason) throw new Error("Có chênh lệch giữa kiểm kê và số vỏ theo NCC; vui lòng nhập lý do trước khi chốt");
+
+    const beforeRows = await tx`
+      SELECT stock_point_id,product_id,bucket,qty::float8 AS qty
+      FROM stock_balances
+      WHERE stock_point_id IN ${tx(Array.from(new Set((items as any[]).map((x:any)=>x.stock_point_id))))}
+    `;
+
+    for (const item of items as any[]) {
+      const [current] = await tx`
+        SELECT qty::float8 AS qty FROM stock_balances
+        WHERE stock_point_id=${item.stock_point_id}::uuid AND product_id=${item.product_id}::uuid AND bucket=${item.bucket}
+        FOR UPDATE
+      `;
+      const before = Number(current?.qty ?? 0);
+      const target = Number(item.counted_qty ?? 0);
+      const delta = target - before;
+      if (Math.abs(delta) > 0.000001) {
+        await applyStockDelta({ tx, stockPointId: item.stock_point_id, productId: item.product_id, bucket: item.bucket,
+          delta, referenceType: "inventory_cutover", referenceId: cutoverId, actorUserId: profile.id, occurredDate: goLiveDate,
+          note: `Chốt kiểm kê chuyển đổi ${stocktakeDate}; vận hành từ ${goLiveDate}` });
+      }
+      if (item.bucket === "full") lowStockProducts.add(String(item.product_id));
+    }
+
+    // Mọi số "đầu kỳ chưa phân loại" cũ phải về 0 khi bắt đầu vận hành chính thức.
+    const unclassified = await tx`
+      SELECT sb.stock_point_id,sb.product_id,sb.qty::float8 AS qty
+      FROM stock_balances sb JOIN stock_points sp ON sp.id=sb.stock_point_id
+      WHERE sp.active AND sp.kind='warehouse' AND sb.bucket='unclassified' AND sb.qty<>0
+      FOR UPDATE OF sb
+    `;
+    for (const row of unclassified as any[]) {
+      await applyStockDelta({ tx, stockPointId: row.stock_point_id, productId: row.product_id, bucket: "unclassified",
+        delta: -Number(row.qty), referenceType: "inventory_cutover", referenceId: cutoverId, actorUserId: profile.id,
+        occurredDate: goLiveDate, note: "Xóa số đầu kỳ chưa phân loại tại mốc chốt vận hành" });
+    }
+
+    await tx`
+      UPDATE inventory_cutovers SET status='finalized',discrepancy_reason=${reason || null},finalized_at=now(),finalized_by=${profile.id}::uuid,updated_at=now()
+      WHERE id=${cutoverId}::uuid
+    `;
+    await tx`
+      UPDATE system_operation_state SET mode='live',active_cutover_id=${cutoverId}::uuid,stocktake_date=${stocktakeDate}::date,
+        go_live_date=${goLiveDate}::date,updated_at=now(),updated_by=${profile.id}::uuid WHERE id=1
+    `;
+    await audit({ tx, actorUserId: profile.id, action: "finalize", entityType: "inventory_cutover", entityId: cutoverId,
+      before: { stockBalances: beforeRows },
+      after: { stocktakeDate, goLiveDate, comparison, discrepancyReason: reason || null },
+      note: "Chốt kiểm kê và chuyển hệ thống từ Hồi nhập lịch sử sang Vận hành chính thức." });
+  });
+  for (const productId of lowStockProducts) await checkLowStock(productId);
 }

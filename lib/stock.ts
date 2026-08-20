@@ -57,3 +57,53 @@ export async function audit(params: { actorUserId?: string | null; action: strin
     VALUES (${params.actorUserId ?? null}::uuid,${params.action},${params.entityType},${params.entityId ?? null}::uuid,${params.before ? JSON.stringify(params.before) : null}::jsonb,${params.after ? JSON.stringify(params.after) : null}::jsonb,${params.note ?? null})
   `;
 }
+
+
+export type SystemOperationState = {
+  mode: "historical_import" | "live";
+  stocktake_date: string | Date | null;
+  go_live_date: string | Date | null;
+  active_cutover_id: string | null;
+};
+
+/** Trạng thái vận hành toàn hệ thống. SQL 15 tạo singleton id=1. */
+export async function getSystemOperationState(tx: any = sql): Promise<SystemOperationState> {
+  const rows = await tx`
+    SELECT mode,stocktake_date,go_live_date,active_cutover_id
+    FROM system_operation_state WHERE id=1 LIMIT 1
+  `;
+  return (rows[0] ?? { mode: "historical_import", stocktake_date: null, go_live_date: null, active_cutover_id: null }) as SystemOperationState;
+}
+
+/**
+ * Trong giai đoạn hồi nhập lịch sử NCC, giao/trả phải phục vụ tính tiền và nợ vỏ
+ * nhưng không được giả lập tồn vật lý Kho/Nhóm khi thiếu lịch sử Đổi/Mượn/Trả.
+ * Bút toán được ghi vào điểm ẩn SYS-HISTORY-NCC; inventory_status_v không hiển thị điểm này.
+ */
+export async function recordHistoricalSupplierMovement(params: {
+  productId: string;
+  delta: number;
+  referenceType: "supplier_delivery" | "supplier_delivery_mine" | "supplier_return" | "supplier_return_revision";
+  referenceId: string;
+  actorUserId?: string | null;
+  occurredDate: string;
+  note?: string | null;
+  tx?: any;
+}) {
+  const tx = params.tx ?? sql;
+  const [point] = await tx`SELECT id FROM stock_points WHERE code='SYS-HISTORY-NCC' LIMIT 1`;
+  if (!point) throw new Error("Chưa chạy SQL 15: thiếu điểm ghi lịch sử NCC");
+  const [sumRow] = await tx`
+    SELECT COALESCE(SUM(delta),0)::float8 AS running
+    FROM stock_ledger
+    WHERE stock_point_id=${point.id}::uuid AND product_id=${params.productId}::uuid AND bucket='transit'
+  `;
+  const after = Number(sumRow?.running ?? 0) + Number(params.delta);
+  await tx`
+    INSERT INTO stock_ledger(stock_point_id,product_id,bucket,delta,balance_after,reference_type,reference_id,note,occurred_at,created_by)
+    VALUES (${point.id}::uuid,${params.productId}::uuid,'transit',${params.delta},${after},${params.referenceType},${params.referenceId}::uuid,
+      ${params.note ?? 'Hồi nhập lịch sử NCC - không cập nhật tồn vật lý'},
+      ((${params.occurredDate}::date + time '12:00') AT TIME ZONE 'Asia/Ho_Chi_Minh'),${params.actorUserId ?? null}::uuid)
+  `;
+  return after;
+}

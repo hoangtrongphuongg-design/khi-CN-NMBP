@@ -387,6 +387,45 @@ CREATE TABLE IF NOT EXISTS notification_outbox (
 );
 CREATE INDEX IF NOT EXISTS notification_outbox_pending_idx ON notification_outbox(status, created_at);
 
+-- Mốc kiểm kê chuyển đổi từ hồi nhập lịch sử sang vận hành chính thức.
+CREATE TABLE IF NOT EXISTS inventory_cutovers (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  stocktake_date date NOT NULL,
+  go_live_date date NOT NULL,
+  status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','finalized')),
+  note text,
+  discrepancy_reason text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  created_by uuid NOT NULL REFERENCES users(id),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  finalized_at timestamptz,
+  finalized_by uuid REFERENCES users(id),
+  CHECK (go_live_date > stocktake_date)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS inventory_cutovers_one_draft_uq ON inventory_cutovers(status) WHERE status='draft';
+CREATE UNIQUE INDEX IF NOT EXISTS inventory_cutovers_one_finalized_uq ON inventory_cutovers(status) WHERE status='finalized';
+
+CREATE TABLE IF NOT EXISTS inventory_cutover_items (
+  cutover_id uuid NOT NULL REFERENCES inventory_cutovers(id) ON DELETE CASCADE,
+  stock_point_id uuid NOT NULL REFERENCES stock_points(id),
+  product_id uuid NOT NULL REFERENCES products(id),
+  bucket text NOT NULL CHECK (bucket IN ('full','empty','available','managed')),
+  counted_qty numeric(14,3) NOT NULL CHECK (counted_qty >= 0),
+  PRIMARY KEY (cutover_id,stock_point_id,product_id,bucket)
+);
+CREATE INDEX IF NOT EXISTS inventory_cutover_items_product_idx ON inventory_cutover_items(cutover_id,product_id);
+
+CREATE TABLE IF NOT EXISTS system_operation_state (
+  id smallint PRIMARY KEY DEFAULT 1 CHECK (id=1),
+  mode text NOT NULL DEFAULT 'historical_import' CHECK (mode IN ('historical_import','live')),
+  active_cutover_id uuid REFERENCES inventory_cutovers(id),
+  stocktake_date date,
+  go_live_date date,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  updated_by uuid REFERENCES users(id)
+);
+INSERT INTO system_operation_state(id,mode) VALUES (1,'historical_import') ON CONFLICT(id) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS adjustment_notes (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   adjustment_code text NOT NULL UNIQUE,

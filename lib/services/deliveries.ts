@@ -6,7 +6,7 @@ import {
   canFeedbackDelivery,
   canFinalizePhcDelivery,
 } from "@/lib/auth/permissions";
-import { applyStockDelta, audit, getStockPointByCode } from "@/lib/stock";
+import { applyStockDelta, audit, getStockPointByCode, getSystemOperationState, recordHistoricalSupplierMovement } from "@/lib/stock";
 import { resolvePriceRule, tripPriceType } from "@/lib/pricing";
 import { checkLowStock } from "@/lib/notifications/low-stock";
 import { toDateKey } from "@/lib/utils";
@@ -28,6 +28,10 @@ export async function createSupplierDelivery(profile: Profile, input: { delivery
   if (new Set(lineKeys).size !== lineKeys.length) throw new Error("Mỗi loại khí chỉ nhập một lần tại cùng một địa điểm");
 
   return sql.begin(async (tx) => {
+    const operationState = await getSystemOperationState(tx);
+    if (operationState.mode === "live" && operationState.go_live_date && input.deliveryDate < toDateKey(operationState.go_live_date)) {
+      throw new Error(`Hệ thống đã vận hành chính thức từ ${toDateKey(operationState.go_live_date)}; không nhập Phiếu giao lịch sử trước mốc này bằng luồng vận hành.`);
+    }
     const destinationIds = Array.from(new Set(lines.map((x) => x.destinationLocationId)));
     const destinations = await tx`SELECT id,code,name FROM locations WHERE id IN ${tx(destinationIds)} AND active=true`;
     if (destinations.length !== destinationIds.length || (destinations as any[]).some((x:any) => !["PLANT", "MINE"].includes(x.code))) {
@@ -305,40 +309,37 @@ export async function finalizeDeliveryByPhc(profile: Profile, deliveryId: string
       });
     }
 
+    const operationState = await getSystemOperationState(tx);
+    const historicalImport = operationState.mode === "historical_import";
+
     for (let index = 0; index < items.length; index += 1) {
       const item: any = items[index];
       const priced = pricedItems[index];
 
-      // Dòng đã confirmed chỉ có thể phát sinh từ một lần hoàn tất trước đó; không cộng tồn lần hai.
-      if (item.status !== "confirmed") {
-        if (item.location_code === "PLANT" && item.returnable_container) {
+      // Trong chế độ hồi nhập lịch sử, NCC giao/trả chỉ dựng lịch sử chi phí + nợ vỏ.
+      // Không giả lập tồn vật lý vì thiếu lịch sử Đổi/Mượn/Trả nội bộ; tồn thật sẽ được chốt bằng kiểm kê Admin.
+      if (item.status !== "confirmed" && item.returnable_container) {
+        const referenceType = item.location_code === "MINE" ? "supplier_delivery_mine" : "supplier_delivery";
+        if (historicalImport) {
+          await recordHistoricalSupplierMovement({
+            tx, productId: item.product_id, delta: priced.actualQty, referenceType,
+            referenceId: deliveryId, actorUserId: profile.id, occurredDate: deliveryDate,
+            note: `Hồi nhập NCC giao ${item.location_code === "MINE" ? "Mỏ" : "Nhà máy"}; không cập nhật tồn vật lý`,
+          });
+        } else if (item.location_code === "PLANT") {
           const wh = await getStockPointByCode("WH-PHC", tx);
           const bucket = item.warehouse_split_full_empty ? "full" : "available";
           await applyStockDelta({
-            tx,
-            stockPointId: wh.id,
-            productId: item.product_id,
-            bucket,
-            delta: priced.actualQty,
-            referenceType: "supplier_delivery",
-            referenceId: deliveryId,
-            actorUserId: profile.id,
-            occurredDate: deliveryDate,
+            tx, stockPointId: wh.id, productId: item.product_id, bucket, delta: priced.actualQty,
+            referenceType, referenceId: deliveryId, actorUserId: profile.id, occurredDate: deliveryDate,
           });
           if (bucket === "full") lowStockProductIds.add(item.product_id);
-        } else if (item.location_code === "MINE" && item.returnable_container) {
+        } else if (item.location_code === "MINE") {
           const mineRows = await tx`SELECT sp.id FROM stock_points sp JOIN work_groups g ON g.id=sp.group_id WHERE g.code='COI' LIMIT 1`;
           if (!mineRows[0]) throw new Error("Chưa cấu hình điểm tồn Nhóm Cối/Mỏ");
           await applyStockDelta({
-            tx,
-            stockPointId: mineRows[0].id,
-            productId: item.product_id,
-            bucket: "managed",
-            delta: priced.actualQty,
-            referenceType: "supplier_delivery_mine",
-            referenceId: deliveryId,
-            actorUserId: profile.id,
-            occurredDate: deliveryDate,
+            tx, stockPointId: mineRows[0].id, productId: item.product_id, bucket: "managed", delta: priced.actualQty,
+            referenceType, referenceId: deliveryId, actorUserId: profile.id, occurredDate: deliveryDate,
           });
         }
       }

@@ -457,3 +457,15 @@ Có cơ cấu chi phí, xu hướng, top loại khí, bảng tổng hợp theo l
 - Danh sách Phiếu giao NCC mặc định: **Có phản hồi → Chờ xác nhận thực nhận → Chờ Trưởng kho → đang xử lý khác → Hoàn tất**, và trong từng nhóm **mới nhất → cũ nhất**.
 - Phiếu chưa hoàn tất phải nổi bật hơn lịch sử hoàn tất, đặc biệt trên màn hình điện thoại.
 - Thay đổi này không sửa database và không thay đổi các giao diện/luồng khác đã khóa nếu không liên quan trực tiếp.
+
+
+## Mốc kiểm kê chuyển đổi / đưa hệ thống vào vận hành (V1.0.38)
+- Chỉ Admin có chức năng `Kiểm kê & chốt vận hành`.
+- Trước khi chốt, hệ thống ở `historical_import`: dùng lịch sử NCC từ 01/01 để tính mua khí, cước, thuê vỏ, XL-45 và nợ vỏ; không dùng lịch sử này để khẳng định tồn vật lý Kho/Nhóm vì thiếu Đổi/Mượn/Trả nội bộ.
+- Admin nhập kiểm kê: Kho Hậu cần (Đầy/Rỗng; XL-45 theo số bồn), từng nhóm (tổng từng loại), Mỏ/Nhóm Cối (tổng từng loại).
+- Hệ thống đối chiếu từng sản phẩm: `Theo NCC = số dư đầu kỳ + NCC giao - trả NCC`; `Kiểm kê = Kho + nhóm + Mỏ`; hiển thị chênh lệch.
+- Chỉ được chốt khi toàn bộ Phiếu giao/trả NCC đến ngày kiểm kê đã hoàn tất và Phiếu trả đã được Trưởng kho hậu kiểm.
+- Nếu còn chênh lệch, Admin phải nhập lý do.
+- Khi chốt: tạo bút toán `inventory_cutover`, đưa tồn về đúng số kiểm kê, xóa bucket đầu kỳ chưa phân loại còn sót, lưu audit, chuyển hệ thống sang `live`.
+- Không sửa/xóa lịch sử NCC hoặc chi phí trước mốc kiểm kê.
+- Sau go-live, các nghiệp vụ mới cập nhật tồn vật lý theo luồng chuẩn; không cho back-date Phiếu NCC trước go-live bằng luồng vận hành thường.
