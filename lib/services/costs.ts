@@ -367,13 +367,19 @@ export function summarizeGoodsCost(rows: GoodsCostDetail[]): GoodsCostSummary[] 
 export type TransportCostRow = {
   trip_date: string;
   trip_code: string;
-  delivery_code: string;
+  reference_code: string;
   trip_kind: string;
+  visits_plant: boolean;
   visits_mine: boolean;
   unit_price: number;
   amount: number;
 };
 
+/**
+ * Cước vận chuyển lấy transport_trips làm nguồn dữ liệu gốc.
+ * Một chuyến vẫn phải được tính/hiển thị dù chuyến chỉ có trả vỏ hoặc là chuyến lịch sử
+ * không gắn supplier_delivery. Phiếu giao/phiếu trả chỉ là chứng từ tham chiếu của chuyến.
+ */
 export async function getTransportCostDetails(params: {
   startDate: string;
   endDateExclusive: string;
@@ -383,24 +389,76 @@ export async function getTransportCostDetails(params: {
 }): Promise<TransportCostRow[]> {
   if (params.endDateExclusive <= params.startDate) return [] as TransportCostRow[];
   const rows = await sql`
-    SELECT t.trip_date,t.trip_code,d.delivery_code,t.trip_kind,t.visits_mine,
-      t.transport_unit_price::float8 AS unit_price,t.transport_amount::float8 AS amount
+    SELECT
+      t.trip_date,
+      t.trip_code,
+      t.trip_kind,
+      t.visits_plant,
+      t.visits_mine,
+      t.transport_unit_price::float8 AS unit_price,
+      t.transport_amount::float8 AS amount,
+      COALESCE(
+        NULLIF(concat_ws(' · ',d.delivery_codes,r.return_codes),''),
+        t.trip_code
+      ) AS reference_code
     FROM transport_trips t
-    JOIN supplier_deliveries d ON d.trip_id=t.id AND d.status='completed'
+    LEFT JOIN LATERAL (
+      SELECT string_agg(sd.delivery_code,', ' ORDER BY sd.delivery_code) AS delivery_codes
+      FROM supplier_deliveries sd
+      WHERE sd.trip_id=t.id AND sd.status<>'cancelled'
+    ) d ON true
+    LEFT JOIN LATERAL (
+      SELECT string_agg(sr.return_code,', ' ORDER BY sr.return_code) AS return_codes
+      FROM supplier_returns sr
+      WHERE sr.trip_id=t.id AND sr.status<>'cancelled'
+    ) r ON true
     WHERE t.status='completed'
       AND t.trip_date>=${params.startDate}::date AND t.trip_date<${params.endDateExclusive}::date
       AND (${params.supplierOrgId ?? null}::uuid IS NULL OR t.supplier_org_id=${params.supplierOrgId ?? null}::uuid)
-      AND (${params.locationId ?? null}::uuid IS NULL
-        OR EXISTS (SELECT 1 FROM supplier_delivery_items di WHERE di.delivery_id=d.id AND di.destination_location_id=${params.locationId ?? null}::uuid))
-      AND (${params.productId ?? null}::uuid IS NULL
-        OR EXISTS (SELECT 1 FROM supplier_delivery_items di WHERE di.delivery_id=d.id AND di.product_id=${params.productId ?? null}::uuid))
-    ORDER BY t.trip_date DESC,d.delivery_code DESC
+      AND (
+        ${params.locationId ?? null}::uuid IS NULL
+        OR EXISTS (
+          SELECT 1
+          FROM locations fl
+          WHERE fl.id=${params.locationId ?? null}::uuid
+            AND ((fl.code='MINE' AND t.visits_mine) OR (fl.code='PLANT' AND t.visits_plant))
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM supplier_deliveries sd
+          JOIN supplier_delivery_items di ON di.delivery_id=sd.id
+          WHERE sd.trip_id=t.id AND sd.status<>'cancelled'
+            AND di.destination_location_id=${params.locationId ?? null}::uuid
+        )
+        OR EXISTS (
+          SELECT 1 FROM supplier_returns sr
+          WHERE sr.trip_id=t.id AND sr.status<>'cancelled'
+            AND sr.source_location_id=${params.locationId ?? null}::uuid
+        )
+      )
+      AND (
+        ${params.productId ?? null}::uuid IS NULL
+        OR EXISTS (
+          SELECT 1
+          FROM supplier_deliveries sd
+          JOIN supplier_delivery_items di ON di.delivery_id=sd.id
+          WHERE sd.trip_id=t.id AND sd.status<>'cancelled' AND di.product_id=${params.productId ?? null}::uuid
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM supplier_returns sr
+          JOIN supplier_return_items ri ON ri.supplier_return_id=sr.id
+          WHERE sr.trip_id=t.id AND sr.status<>'cancelled' AND ri.product_id=${params.productId ?? null}::uuid
+        )
+      )
+    ORDER BY t.trip_date DESC,t.trip_code DESC
   `;
   return rows.map((r: any): TransportCostRow => ({
     trip_date: toDateKey(r.trip_date),
     trip_code: String(r.trip_code),
-    delivery_code: String(r.delivery_code),
+    reference_code: String(r.reference_code || r.trip_code),
     trip_kind: String(r.trip_kind),
+    visits_plant: Boolean(r.visits_plant),
     visits_mine: Boolean(r.visits_mine),
     unit_price: Number(r.unit_price ?? 0),
     amount: Number(r.amount ?? 0),

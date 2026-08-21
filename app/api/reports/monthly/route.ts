@@ -93,25 +93,65 @@ export async function GET(request: Request) {
   wsR.columns = excelColumns([["Ngày","return_date",13],["Phiếu trả","return_code",20],["Nơi trả","source",24],["Phiếu giao gốc","delivery_code",20],["Loại vỏ","product",24],["ĐVT","unit",10],["Số lượng trả","declared_qty",14],["Trạng thái","status",16]]);
   returns.forEach((r:any)=>wsR.addRow(r)); styleSheet(wsR);
 
-  const trips = supplierClause ? await sql`
-    SELECT t.trip_date,t.trip_code,d.delivery_code,t.trip_kind,t.visits_mine,t.transport_unit_price::float8,t.transport_amount::float8,t.status
+  const trips = await sql`
+    SELECT
+      t.trip_date,
+      t.trip_code,
+      COALESCE(NULLIF(concat_ws(' · ',d.delivery_codes,r.return_codes),''),t.trip_code) AS reference_code,
+      t.trip_kind,
+      t.visits_plant,
+      t.visits_mine,
+      t.transport_unit_price::float8,
+      t.transport_amount::float8,
+      t.status
     FROM transport_trips t
-    JOIN supplier_deliveries d ON d.trip_id=t.id AND d.status='completed'
-    WHERE t.status='completed' AND t.trip_date>=${start}::date AND t.trip_date<${endDate}::date AND t.supplier_org_id=${supplierClause}::uuid
-      AND (${locationId}::uuid IS NULL OR EXISTS (SELECT 1 FROM supplier_delivery_items di WHERE di.delivery_id=d.id AND di.destination_location_id=${locationId}::uuid))
-      AND (${productId}::uuid IS NULL OR EXISTS (SELECT 1 FROM supplier_delivery_items di WHERE di.delivery_id=d.id AND di.product_id=${productId}::uuid))
-    ORDER BY t.trip_date,d.delivery_code
-  ` : await sql`
-    SELECT t.trip_date,t.trip_code,d.delivery_code,t.trip_kind,t.visits_mine,t.transport_unit_price::float8,t.transport_amount::float8,t.status
-    FROM transport_trips t
-    JOIN supplier_deliveries d ON d.trip_id=t.id AND d.status='completed'
-    WHERE t.status='completed' AND t.trip_date>=${start}::date AND t.trip_date<${endDate}::date
-      AND (${locationId}::uuid IS NULL OR EXISTS (SELECT 1 FROM supplier_delivery_items di WHERE di.delivery_id=d.id AND di.destination_location_id=${locationId}::uuid))
-      AND (${productId}::uuid IS NULL OR EXISTS (SELECT 1 FROM supplier_delivery_items di WHERE di.delivery_id=d.id AND di.product_id=${productId}::uuid))
-    ORDER BY t.trip_date,d.delivery_code
+    LEFT JOIN LATERAL (
+      SELECT string_agg(sd.delivery_code,', ' ORDER BY sd.delivery_code) AS delivery_codes
+      FROM supplier_deliveries sd
+      WHERE sd.trip_id=t.id AND sd.status<>'cancelled'
+    ) d ON true
+    LEFT JOIN LATERAL (
+      SELECT string_agg(sr.return_code,', ' ORDER BY sr.return_code) AS return_codes
+      FROM supplier_returns sr
+      WHERE sr.trip_id=t.id AND sr.status<>'cancelled'
+    ) r ON true
+    WHERE t.status='completed'
+      AND t.trip_date>=${start}::date AND t.trip_date<${endDate}::date
+      AND (${supplierClause}::uuid IS NULL OR t.supplier_org_id=${supplierClause}::uuid)
+      AND (
+        ${locationId}::uuid IS NULL
+        OR EXISTS (
+          SELECT 1 FROM locations fl
+          WHERE fl.id=${locationId}::uuid
+            AND ((fl.code='MINE' AND t.visits_mine) OR (fl.code='PLANT' AND t.visits_plant))
+        )
+        OR EXISTS (
+          SELECT 1 FROM supplier_deliveries sd
+          JOIN supplier_delivery_items di ON di.delivery_id=sd.id
+          WHERE sd.trip_id=t.id AND sd.status<>'cancelled' AND di.destination_location_id=${locationId}::uuid
+        )
+        OR EXISTS (
+          SELECT 1 FROM supplier_returns sr
+          WHERE sr.trip_id=t.id AND sr.status<>'cancelled' AND sr.source_location_id=${locationId}::uuid
+        )
+      )
+      AND (
+        ${productId}::uuid IS NULL
+        OR EXISTS (
+          SELECT 1 FROM supplier_deliveries sd
+          JOIN supplier_delivery_items di ON di.delivery_id=sd.id
+          WHERE sd.trip_id=t.id AND sd.status<>'cancelled' AND di.product_id=${productId}::uuid
+        )
+        OR EXISTS (
+          SELECT 1 FROM supplier_returns sr
+          JOIN supplier_return_items ri ON ri.supplier_return_id=sr.id
+          WHERE sr.trip_id=t.id AND sr.status<>'cancelled' AND ri.product_id=${productId}::uuid
+        )
+      )
+    ORDER BY t.trip_date,t.trip_code
   `;
   const wsT = wb.addWorksheet("Chuyến & cước");
-  wsT.columns = excelColumns([["Ngày","trip_date",13],["Phiếu giao / chuyến","delivery_code",22],["Loại cước","trip_kind",16],["Đơn giá cước","transport_unit_price",16],["Thành tiền","transport_amount",16],["Trạng thái","status",14]]);
+  wsT.columns = excelColumns([["Ngày","trip_date",13],["Phát sinh / chuyến","reference_code",28],["Loại cước","trip_kind",16],["Đơn giá cước","transport_unit_price",16],["Thành tiền","transport_amount",16],["Trạng thái","status",14]]);
   trips.forEach((r:any)=>wsT.addRow(r)); styleSheet(wsT); wsT.getColumn("transport_unit_price").numFmt="#,##0"; wsT.getColumn("transport_amount").numFmt="#,##0";
 
   const xl45 = await sql`

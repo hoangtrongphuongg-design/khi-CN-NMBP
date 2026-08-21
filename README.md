@@ -1,4 +1,11 @@
-# Quản lý khí NMBP — V1.0.41
+# Quản lý khí NMBP — V1.0.42
+
+### Sửa lỗi V1.0.42 — chuyến vận chuyển độc lập
+
+- Báo cáo cước lấy `transport_trips` làm nguồn gốc, không còn bắt buộc phải có `supplier_deliveries`.
+- Chuyến chỉ có trả vỏ hoặc chuyến lịch sử độc lập vẫn hiển thị và được cộng cước.
+- Bộ lọc địa điểm nhận diện trực tiếp `visits_plant` / `visits_mine` và chứng từ gắn với chuyến.
+- Không cần migration SQL khi nâng từ V1.0.41 lên V1.0.42.
 
 Hệ thống quản lý khí công nghiệp/vỏ chai tại Nhà máy Xi măng Bình Phước và Mỏ đá Tà Thiết.
 
