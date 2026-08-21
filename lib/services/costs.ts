@@ -200,7 +200,7 @@ export async function getCylinderRentalDaily(params: {
         AND product_id IS NULL
         AND effective_from<=days.day
         AND (effective_to IS NULL OR effective_to>=days.day)
-      ORDER BY effective_from DESC,created_at DESC
+      ORDER BY CASE rule_kind WHEN 'adjustment' THEN 0 WHEN 'base' THEN 1 ELSE 2 END,effective_from DESC,created_at DESC
       LIMIT 1
     ) pr ON true
     ORDER BY days.day,p.display_order,p.name
@@ -302,7 +302,7 @@ export async function getGoodsCostDetails(params: {
       FROM price_rules x
       WHERE x.price_type='product' AND x.product_id=di.product_id AND x.effective_from<=d.delivery_date
         AND (x.effective_to IS NULL OR x.effective_to>=d.delivery_date)
-      ORDER BY x.effective_from DESC,x.created_at DESC
+      ORDER BY CASE x.rule_kind WHEN 'adjustment' THEN 0 WHEN 'base' THEN 1 ELSE 2 END,x.effective_from DESC,x.created_at DESC
       LIMIT 1
     ) pr ON true
     WHERE d.status='completed' AND di.status='confirmed'
@@ -461,7 +461,7 @@ export async function getXL45RentalDaily(params: {
       SELECT unit_price FROM price_rules
       WHERE price_type='xl45_rental_day' AND product_id IS NULL AND effective_from<=days.day
         AND (effective_to IS NULL OR effective_to>=days.day)
-      ORDER BY effective_from DESC,created_at DESC LIMIT 1
+      ORDER BY CASE rule_kind WHEN 'adjustment' THEN 0 WHEN 'base' THEN 1 ELSE 2 END,effective_from DESC,created_at DESC LIMIT 1
     ) pr ON true
     WHERE days.day>=l.delivered_date
     GROUP BY days.day,l.product_id,l.product_code,l.product_name,pr.unit_price

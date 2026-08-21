@@ -313,14 +313,23 @@ export async function createContract(profile: Profile, input: {
   validTo?: string | null;
 }) {
   assertAdmin(profile);
-  if (!input.supplierOrgId || !input.contractNo.trim() || !input.validFrom) throw new Error("Thiếu thông tin hợp đồng");
-  if (input.validTo && input.validTo < input.validFrom) throw new Error("Ngày hết hiệu lực phải sau ngày bắt đầu");
+  if (!input.supplierOrgId || !input.contractNo.trim() || !input.contractName?.trim() || !input.validFrom) throw new Error("Thiếu số hợp đồng, tên hợp đồng, NCC hoặc ngày hiệu lực");
+  if (input.validTo && input.validTo < input.validFrom) throw new Error("Ngày hết hiệu lực phải sau hoặc bằng ngày bắt đầu");
+  const [overlap] = await sql`
+    SELECT contract_no,valid_from,valid_to
+    FROM contracts
+    WHERE supplier_org_id=${input.supplierOrgId}::uuid AND active=true
+      AND daterange(valid_from,COALESCE(valid_to,DATE '9999-12-31'),'[]')
+          && daterange(${input.validFrom}::date,COALESCE(${input.validTo || null}::date,DATE '9999-12-31'),'[]')
+    LIMIT 1
+  `;
+  if (overlap) throw new Error(`Thời hạn hợp đồng bị chồng với ${overlap.contract_no} (${toDateKey(overlap.valid_from)} → ${overlap.valid_to ? toDateKey(overlap.valid_to) : "không giới hạn"})`);
   const [row] = await sql`
     INSERT INTO contracts(supplier_org_id,contract_no,contract_name,signed_date,valid_from,valid_to,active,created_by)
-    VALUES (${input.supplierOrgId}::uuid,${input.contractNo.trim()},${input.contractName || null},${input.signedDate || null}::date,${input.validFrom}::date,${input.validTo || null}::date,true,${profile.id}::uuid)
+    VALUES (${input.supplierOrgId}::uuid,${input.contractNo.trim()},${input.contractName.trim()},${input.signedDate || null}::date,${input.validFrom}::date,${input.validTo || null}::date,true,${profile.id}::uuid)
     RETURNING id
   `;
-  await audit({ actorUserId: profile.id, action: "create", entityType: "contract", entityId: row.id, after: input });
+  await audit({ actorUserId: profile.id, action: "create", entityType: "contract", entityId: row.id, after: input, note: "Tạo hợp đồng; hệ thống kiểm tra không chồng thời gian với hợp đồng khác của cùng NCC" });
   return row.id as string;
 }
 

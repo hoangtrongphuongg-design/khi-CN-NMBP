@@ -411,7 +411,7 @@ async function ManagementHome({ profile }: { profile: Profile }) {
 async function AdminHome() {
   const [userRow, priceRow, summary, recentAudit] = await Promise.all([
     sql<any[]>`SELECT count(*)::int AS total,count(*) FILTER (WHERE active)::int AS active FROM users`,
-    sql<any[]>`SELECT count(*) FILTER (WHERE effective_to IS NOT NULL AND effective_to BETWEEN CURRENT_DATE AND CURRENT_DATE+interval '45 days')::int AS expiring,count(*) FILTER (WHERE effective_to<CURRENT_DATE)::int AS expired FROM price_rules`,
+    sql<any[]>`SELECT count(*) FILTER (WHERE effective_to IS NOT NULL AND effective_to BETWEEN CURRENT_DATE AND CURRENT_DATE+interval '45 days')::int AS expiring,count(*) FILTER (WHERE effective_to<CURRENT_DATE)::int AS expired FROM price_rules WHERE rule_kind='base'`,
     getAdminControlSummary(),
     sql<any[]>`SELECT a.id,a.action,a.entity_type,a.note,a.created_at,u.full_name AS actor_name FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_user_id ORDER BY a.created_at DESC LIMIT 6`,
   ]);

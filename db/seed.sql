@@ -68,8 +68,8 @@ FROM organizations o WHERE o.code='ANHTAN'
 AND NOT EXISTS (SELECT 1 FROM contracts WHERE contract_no='121/CCKCN-2026');
 
 WITH c AS (SELECT id FROM contracts WHERE contract_no='121/CCKCN-2026' ORDER BY created_at DESC LIMIT 1)
-INSERT INTO price_rules(contract_id,price_type,product_id,unit,unit_price,effective_from,note)
-SELECT c.id,'product',p.id,p.unit,v.price,'2026-03-02','Đơn giá HĐ 121/CCKCN-2026'
+INSERT INTO price_rules(contract_id,price_type,product_id,unit,unit_price,effective_from,effective_to,note,rule_kind)
+SELECT c.id,'product',p.id,p.unit,v.price,'2026-03-02','2027-03-01','Đơn giá HĐ 121/CCKCN-2026','base'
 FROM c
 JOIN (VALUES
   ('O2',80000::numeric),('CO2',300000),('N2',154000),('LOX-XL45',2750000),('LIN-XL45',2850000),
@@ -81,8 +81,8 @@ WHERE NOT EXISTS (
 );
 
 WITH c AS (SELECT id FROM contracts WHERE contract_no='121/CCKCN-2026' ORDER BY created_at DESC LIMIT 1)
-INSERT INTO price_rules(contract_id,price_type,unit,unit_price,effective_from,note)
-SELECT c.id,v.price_type,v.unit,v.price,'2026-03-02','Đơn giá HĐ 121/CCKCN-2026'
+INSERT INTO price_rules(contract_id,price_type,unit,unit_price,effective_from,effective_to,note,rule_kind)
+SELECT c.id,v.price_type,v.unit,v.price,'2026-03-02','2027-03-01','Đơn giá HĐ 121/CCKCN-2026','base'
 FROM c
 JOIN (VALUES
  ('trip_plant','chuyến',1600000::numeric),

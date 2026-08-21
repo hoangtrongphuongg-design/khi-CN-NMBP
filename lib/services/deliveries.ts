@@ -49,7 +49,7 @@ export async function createSupplierDelivery(profile: Profile, input: { delivery
 
     const co2Special = (productRows as any[]).some((x:any) => x.code === "LIQ-CO2");
     const kind = co2Special ? "co2_liquid" : visitsMine ? "mine" : "plant";
-    const price = await resolvePriceRule(tripPriceType(visitsMine, co2Special), input.deliveryDate, null, tx);
+    const price = await resolvePriceRule(tripPriceType(visitsMine, co2Special), input.deliveryDate, null, tx, supplierId);
     if (!price) throw new Error("Chưa cấu hình đơn giá vận chuyển có hiệu lực cho ngày giao");
 
     // 1 Phiếu giao NCC = 1 chuyến = 1 cước.
@@ -296,7 +296,7 @@ export async function finalizeDeliveryByPhc(profile: Profile, deliveryId: string
 
     for (const item of items as any[]) {
       const actualQty = Number(item.confirmed_qty ?? 0);
-      const price = await resolvePriceRule("product", deliveryDate, item.product_id, tx);
+      const price = await resolvePriceRule("product", deliveryDate, item.product_id, tx, delivery.supplier_org_id);
       const unitPrice = price ? Number(price.unit_price ?? 0) : null;
       pricedItems.push({
         id: item.id,
@@ -513,7 +513,7 @@ async function repriceXL45AllocationsForLot(tx: any, lotId: string, deliveredDat
         SELECT pr.unit_price FROM price_rules pr
         WHERE pr.price_type='xl45_rental_day' AND pr.effective_from<=d::date
           AND (pr.effective_to IS NULL OR pr.effective_to>=d::date)
-        ORDER BY pr.effective_from DESC LIMIT 1
+        ORDER BY CASE pr.rule_kind WHEN 'adjustment' THEN 0 WHEN 'base' THEN 1 ELSE 2 END,pr.effective_from DESC,pr.created_at DESC LIMIT 1
       )),0)::float8 AS amount_per_bon
       FROM generate_series(${deliveredDate}::date + interval '15 day',${toDateKey(allocation.return_date)}::date,interval '1 day') AS gs(d)
     `;
@@ -713,7 +713,7 @@ export async function adminCorrectSupplierDelivery(profile: Profile, deliveryId:
       if ((returnLocations as any[]).some((row:any)=>row.code==='MINE') && !visitsMine) throw new Error("Chuyến đã có Phiếu trả vỏ Mỏ; không thể xóa toàn bộ điểm giao Mỏ khỏi chuyến");
     }
     const tripKind = co2Special ? "co2_liquid" : visitsMine ? "mine" : "plant";
-    const tripPrice = await resolvePriceRule(tripPriceType(visitsMine,co2Special),input.deliveryDate,null,tx);
+    const tripPrice = await resolvePriceRule(tripPriceType(visitsMine,co2Special),input.deliveryDate,null,tx,delivery.supplier_org_id);
     if (!tripPrice) throw new Error("Không có đơn giá vận chuyển có hiệu lực cho ngày mới");
     if (delivery.trip_id) {
       await tx`
@@ -726,7 +726,7 @@ export async function adminCorrectSupplierDelivery(profile: Profile, deliveryId:
 
     if (effectsApplied) {
       for (const item of currentItems as any[]) {
-        const price = await resolvePriceRule("product",input.deliveryDate,item.product_id,tx);
+        const price = await resolvePriceRule("product",input.deliveryDate,item.product_id,tx,delivery.supplier_org_id);
         const unitPrice = price ? Number(price.unit_price) : null;
         const amount = unitPrice == null ? null : unitPrice * Number(item.confirmed_qty || 0);
         await tx`

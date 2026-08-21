@@ -1,4 +1,4 @@
-# Quản lý khí NMBP — V1.0.15
+# Quản lý khí NMBP — V1.0.40
 
 Hệ thống quản lý khí công nghiệp/vỏ chai tại Nhà máy Xi măng Bình Phước và Mỏ đá Tà Thiết.
 
@@ -79,3 +79,11 @@ Chạy `15_KIEM_KE_CHOT_VAN_HANH.sql` trên Neon trước khi deploy code V1.0.3
 
 ### Nâng cấp V1.0.39
 Chạy `16_KHOA_AUDIT_ADMIN_CHINH_DU_LIEU.sql` trên Neon sau SQL 15 và trước khi deploy V1.0.39. SQL 16 chỉ khóa `audit_logs` khỏi UPDATE/DELETE; không thay đổi dữ liệu nghiệp vụ hiện có. V1.0.39 bổ sung Trung tâm Admin và chức năng chỉnh dữ liệu nghiệp vụ có Audit.
+### Nâng cấp V1.0.40 — Bảng đơn giá theo tháng
+
+Trên database đang chạy, **chạy SQL trước rồi mới deploy code**:
+
+`NEON_SQL/20_QUAN_LY_DON_GIA_THEO_THANG.sql`
+
+V1.0.40 giữ giá gốc theo hợp đồng, cho phép điều chỉnh nhiều khoảng Từ ngày–Đến ngày trong từng tháng, tự tính lại giao dịch bị ảnh hưởng và khóa bảng giá tháng. Giá là giá chưa VAT. Hợp đồng mới được Admin tạo thủ công và không được chồng thời hạn với hợp đồng khác của cùng NCC.
+

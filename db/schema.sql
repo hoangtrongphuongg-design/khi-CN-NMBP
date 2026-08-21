@@ -166,12 +166,99 @@ CREATE TABLE IF NOT EXISTS price_rules (
   note text,
   created_at timestamptz NOT NULL DEFAULT now(),
   created_by uuid REFERENCES users(id),
+  rule_kind text NOT NULL DEFAULT 'legacy' CHECK (rule_kind IN ('base','adjustment','legacy')),
   CHECK ((price_type = 'product' AND product_id IS NOT NULL) OR (price_type <> 'product')),
   CHECK (effective_to IS NULL OR effective_to >= effective_from)
 );
 CREATE INDEX IF NOT EXISTS price_rules_lookup_idx ON price_rules(price_type, product_id, effective_from DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS price_rules_product_effective_uq ON price_rules(product_id,effective_from) WHERE price_type='product';
-CREATE UNIQUE INDEX IF NOT EXISTS price_rules_nonproduct_effective_uq ON price_rules(price_type,effective_from) WHERE price_type<>'product';
+CREATE UNIQUE INDEX IF NOT EXISTS price_rules_base_product_uq ON price_rules(contract_id,product_id) WHERE rule_kind='base' AND price_type='product' AND contract_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS price_rules_base_service_uq ON price_rules(contract_id,price_type) WHERE rule_kind='base' AND price_type<>'product' AND contract_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS price_rules_adjustment_product_from_uq ON price_rules(contract_id,product_id,effective_from) WHERE rule_kind='adjustment' AND price_type='product' AND contract_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS price_rules_adjustment_service_from_uq ON price_rules(contract_id,price_type,effective_from) WHERE rule_kind='adjustment' AND price_type<>'product' AND contract_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS price_rules_contract_kind_lookup_idx ON price_rules(contract_id,rule_kind,price_type,product_id,effective_from,effective_to);
+
+CREATE TABLE IF NOT EXISTS price_month_locks (
+  contract_id uuid NOT NULL REFERENCES contracts(id),
+  month_start date NOT NULL,
+  status text NOT NULL DEFAULT 'open' CHECK (status IN ('open','locked')),
+  locked_at timestamptz,
+  locked_by uuid REFERENCES users(id),
+  unlocked_at timestamptz,
+  unlocked_by uuid REFERENCES users(id),
+  unlock_reason text,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(contract_id,month_start),
+  CHECK (month_start=date_trunc('month',month_start)::date)
+);
+
+-- V1.0.40: hợp đồng cùng NCC không được chồng thời hạn.
+CREATE OR REPLACE FUNCTION validate_contract_date_overlap()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE conflict_no text;
+BEGIN
+  IF NEW.active THEN
+    SELECT c.contract_no INTO conflict_no FROM contracts c
+    WHERE c.supplier_org_id=NEW.supplier_org_id AND c.active=true AND c.id<>NEW.id
+      AND daterange(c.valid_from,COALESCE(c.valid_to,DATE '9999-12-31'),'[]')
+          && daterange(NEW.valid_from,COALESCE(NEW.valid_to,DATE '9999-12-31'),'[]')
+    LIMIT 1;
+    IF conflict_no IS NOT NULL THEN RAISE EXCEPTION 'Thời hạn hợp đồng bị chồng với hợp đồng % của cùng NCC',conflict_no; END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS contracts_no_date_overlap ON contracts;
+CREATE TRIGGER contracts_no_date_overlap BEFORE INSERT OR UPDATE OF supplier_org_id,valid_from,valid_to,active ON contracts
+FOR EACH ROW EXECUTE FUNCTION validate_contract_date_overlap();
+
+CREATE OR REPLACE FUNCTION validate_price_adjustment_range()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE c_from date; c_to date; overlap_id uuid;
+BEGIN
+  IF NEW.rule_kind<>'adjustment' THEN RETURN NEW; END IF;
+  IF NEW.contract_id IS NULL OR NEW.effective_to IS NULL THEN RAISE EXCEPTION 'Giá điều chỉnh phải gắn hợp đồng và có Đến ngày'; END IF;
+  IF date_trunc('month',NEW.effective_from)<>date_trunc('month',NEW.effective_to) THEN RAISE EXCEPTION 'Một giá điều chỉnh chỉ được nằm trong cùng một tháng'; END IF;
+  SELECT valid_from,COALESCE(valid_to,DATE '9999-12-31') INTO c_from,c_to FROM contracts WHERE id=NEW.contract_id;
+  IF NEW.effective_from<c_from OR NEW.effective_to>c_to THEN RAISE EXCEPTION 'Khoảng giá điều chỉnh nằm ngoài thời hạn hợp đồng'; END IF;
+  SELECT id INTO overlap_id FROM price_rules x
+  WHERE x.rule_kind='adjustment' AND x.contract_id=NEW.contract_id AND x.price_type=NEW.price_type
+    AND x.product_id IS NOT DISTINCT FROM NEW.product_id AND x.id<>NEW.id
+    AND daterange(x.effective_from,x.effective_to,'[]') && daterange(NEW.effective_from,NEW.effective_to,'[]') LIMIT 1;
+  IF overlap_id IS NOT NULL THEN RAISE EXCEPTION 'Khoảng giá điều chỉnh bị chồng với một khoảng đã có'; END IF;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS price_rules_validate_adjustment ON price_rules;
+CREATE TRIGGER price_rules_validate_adjustment BEFORE INSERT OR UPDATE OF contract_id,price_type,product_id,effective_from,effective_to,rule_kind ON price_rules
+FOR EACH ROW EXECUTE FUNCTION validate_price_adjustment_range();
+
+CREATE OR REPLACE FUNCTION prevent_locked_price_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE r_contract uuid; r_from date; r_to date; r_kind text; locked_month date;
+BEGIN
+  IF TG_OP IN ('UPDATE','DELETE') THEN
+    r_contract:=OLD.contract_id; r_from:=OLD.effective_from; r_to:=COALESCE(OLD.effective_to,DATE '9999-12-31'); r_kind:=OLD.rule_kind;
+    IF r_contract IS NOT NULL AND r_kind IN ('base','adjustment') THEN
+      SELECT month_start INTO locked_month FROM price_month_locks WHERE contract_id=r_contract AND status='locked'
+        AND month_start BETWEEN date_trunc('month',r_from)::date AND date_trunc('month',r_to)::date LIMIT 1;
+      IF locked_month IS NOT NULL THEN RAISE EXCEPTION 'Bảng giá tháng % đã khóa',to_char(locked_month,'MM/YYYY'); END IF;
+    END IF;
+  END IF;
+  IF TG_OP IN ('INSERT','UPDATE') THEN
+    r_contract:=NEW.contract_id; r_from:=NEW.effective_from; r_to:=COALESCE(NEW.effective_to,DATE '9999-12-31'); r_kind:=NEW.rule_kind;
+    IF r_contract IS NOT NULL AND r_kind IN ('base','adjustment') THEN
+      SELECT month_start INTO locked_month FROM price_month_locks WHERE contract_id=r_contract AND status='locked'
+        AND month_start BETWEEN date_trunc('month',r_from)::date AND date_trunc('month',r_to)::date LIMIT 1;
+      IF locked_month IS NOT NULL THEN RAISE EXCEPTION 'Bảng giá tháng % đã khóa',to_char(locked_month,'MM/YYYY'); END IF;
+    END IF;
+  END IF;
+  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS price_rules_locked_guard ON price_rules;
+CREATE TRIGGER price_rules_locked_guard BEFORE INSERT OR UPDATE OR DELETE ON price_rules
+FOR EACH ROW EXECUTE FUNCTION prevent_locked_price_mutation();
 
 CREATE TABLE IF NOT EXISTS transport_trips (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -12,7 +12,7 @@ export async function getXL45Outstanding() {
           WHERE pr.price_type='xl45_rental_day'
             AND pr.effective_from<=d::date
           AND (pr.effective_to IS NULL OR pr.effective_to>=d::date)
-          ORDER BY pr.effective_from DESC LIMIT 1
+          ORDER BY CASE pr.rule_kind WHEN 'adjustment' THEN 0 WHEN 'base' THEN 1 ELSE 2 END,pr.effective_from DESC,pr.created_at DESC LIMIT 1
         ))
         FROM generate_series(x.delivered_date+interval '15 day',CURRENT_DATE,interval '1 day') gs(d)
       ),0)*x.qty_outstanding)::float8 AS accrued_rental
