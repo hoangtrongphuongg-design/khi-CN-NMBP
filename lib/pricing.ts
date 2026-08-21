@@ -17,7 +17,7 @@ export function priceTypeLabel(priceType: PriceType) {
 }
 
 /**
- * Quy tắc giá V1.0.40:
+ * Quy tắc giá V1.0.41:
  * 1) Nếu có điều chỉnh trong đúng khoảng ngày -> dùng adjustment.
  * 2) Nếu không -> quay về giá gốc hợp đồng (base).
  * 3) Nếu dữ liệu lịch sử chưa gắn hợp đồng -> fallback legacy để không làm hỏng lịch sử cũ.

@@ -419,8 +419,8 @@ export type XL45RentalDailyRow = {
 };
 
 /**
- * XL-45: miễn 15 ngày; từ ngày thứ 16 tính theo bồn-ngày. Ngày trả vẫn được tính phí
- * để khớp cách phân bổ hiện hữu của hệ thống (generate_series đến return_date, inclusive).
+ * XL-45: miễn 15 ngày; từ ngày thứ 16 tính theo bồn-ngày. Ngày trả bồn cho NCC không tính phí.
+ * Vì vậy một allocation trả ngày D chỉ chịu phí đến hết ngày D-1.
  */
 export async function getXL45RentalDaily(params: {
   startDate: string;
@@ -446,16 +446,16 @@ export async function getXL45RentalDaily(params: {
         AND (${params.supplierOrgId ?? null}::uuid IS NULL OR d.supplier_org_id=${params.supplierOrgId ?? null}::uuid)
     )
     SELECT days.day,l.product_id,l.product_code,l.product_name,
-      SUM(CASE WHEN days.day>=l.delivered_date THEN GREATEST(0,l.qty_received-COALESCE(ret.returned_before_day,0)) ELSE 0 END)::float8 AS held_qty,
-      SUM(CASE WHEN days.day>=l.delivered_date+15 THEN GREATEST(0,l.qty_received-COALESCE(ret.returned_before_day,0)) ELSE 0 END)::float8 AS charge_qty,
+      SUM(CASE WHEN days.day>=l.delivered_date THEN GREATEST(0,l.qty_received-COALESCE(ret.returned_by_day,0)) ELSE 0 END)::float8 AS held_qty,
+      SUM(CASE WHEN days.day>=l.delivered_date+15 THEN GREATEST(0,l.qty_received-COALESCE(ret.returned_by_day,0)) ELSE 0 END)::float8 AS charge_qty,
       COALESCE(pr.unit_price,0)::float8 AS unit_price,
-      (SUM(CASE WHEN days.day>=l.delivered_date+15 THEN GREATEST(0,l.qty_received-COALESCE(ret.returned_before_day,0)) ELSE 0 END)*COALESCE(pr.unit_price,0))::float8 AS rental_amount
+      (SUM(CASE WHEN days.day>=l.delivered_date+15 THEN GREATEST(0,l.qty_received-COALESCE(ret.returned_by_day,0)) ELSE 0 END)*COALESCE(pr.unit_price,0))::float8 AS rental_amount
     FROM days
     CROSS JOIN lots l
     LEFT JOIN LATERAL (
-      SELECT COALESCE(SUM(a.quantity),0)::numeric AS returned_before_day
+      SELECT COALESCE(SUM(a.quantity),0)::numeric AS returned_by_day
       FROM xl45_return_allocations a
-      WHERE a.xl45_lot_id=l.id AND a.return_date<days.day
+      WHERE a.xl45_lot_id=l.id AND a.return_date<=days.day
     ) ret ON true
     LEFT JOIN LATERAL (
       SELECT unit_price FROM price_rules

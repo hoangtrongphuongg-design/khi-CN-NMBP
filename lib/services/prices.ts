@@ -156,7 +156,7 @@ async function repriceContractRange(tx: any, contractId: string, fromDate: strin
               ORDER BY CASE x.rule_kind WHEN 'adjustment' THEN 0 ELSE 1 END,x.effective_from DESC,x.created_at DESC
               LIMIT 1
             ),0))
-            FROM generate_series(l.delivered_date+interval '15 day',a.return_date,interval '1 day') AS gs(day)
+            FROM generate_series(l.delivered_date+interval '15 day',a.return_date-interval '1 day',interval '1 day') AS gs(day)
           ),0) * a.quantity
         )::numeric AS new_amount
       FROM xl45_return_allocations a
@@ -164,7 +164,7 @@ async function repriceContractRange(tx: any, contractId: string, fromDate: strin
       JOIN supplier_delivery_items di ON di.id=l.delivery_item_id
       JOIN supplier_deliveries d ON d.id=di.delivery_id
       WHERE d.supplier_org_id=${contract.supplier_org_id}::uuid
-        AND a.return_date>=${fromDate}::date
+        AND (a.return_date-interval '1 day')>=${fromDate}::date
         AND (l.delivered_date+15)<=${toDate}::date
     ), updated AS (
       UPDATE xl45_return_allocations a

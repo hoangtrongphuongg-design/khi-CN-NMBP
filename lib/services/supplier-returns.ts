@@ -27,7 +27,7 @@ async function allocateXL45Return(tx: any, supplierReturnItemId: string, product
           AND (pr.effective_to IS NULL OR pr.effective_to>=d::date)
         ORDER BY CASE pr.rule_kind WHEN 'adjustment' THEN 0 WHEN 'base' THEN 1 ELSE 2 END,pr.effective_from DESC,pr.created_at DESC LIMIT 1
       )),0)::float8 AS amount_per_bon
-      FROM generate_series(${toDateKey(lot.delivered_date)}::date + interval '15 day',${returnDate}::date,interval '1 day') AS gs(d)
+      FROM generate_series(${toDateKey(lot.delivered_date)}::date + interval '15 day',${returnDate}::date - interval '1 day',interval '1 day') AS gs(d)
     `;
     const rentalAmount = Number(cost?.amount_per_bon ?? 0) * take;
     await tx`

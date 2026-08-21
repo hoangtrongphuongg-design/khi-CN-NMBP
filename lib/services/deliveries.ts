@@ -515,7 +515,7 @@ async function repriceXL45AllocationsForLot(tx: any, lotId: string, deliveredDat
           AND (pr.effective_to IS NULL OR pr.effective_to>=d::date)
         ORDER BY CASE pr.rule_kind WHEN 'adjustment' THEN 0 WHEN 'base' THEN 1 ELSE 2 END,pr.effective_from DESC,pr.created_at DESC LIMIT 1
       )),0)::float8 AS amount_per_bon
-      FROM generate_series(${deliveredDate}::date + interval '15 day',${toDateKey(allocation.return_date)}::date,interval '1 day') AS gs(d)
+      FROM generate_series(${deliveredDate}::date + interval '15 day',${toDateKey(allocation.return_date)}::date - interval '1 day',interval '1 day') AS gs(d)
     `;
     await tx`UPDATE xl45_return_allocations SET charge_days=${Number(cost?.charge_days || 0)},rental_amount=${Number(cost?.amount_per_bon || 0)*Number(allocation.quantity || 0)} WHERE id=${allocation.id}::uuid`;
   }

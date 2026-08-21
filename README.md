@@ -1,4 +1,4 @@
-# Quản lý khí NMBP — V1.0.40
+# Quản lý khí NMBP — V1.0.41
 
 Hệ thống quản lý khí công nghiệp/vỏ chai tại Nhà máy Xi măng Bình Phước và Mỏ đá Tà Thiết.
 
@@ -79,6 +79,12 @@ Chạy `15_KIEM_KE_CHOT_VAN_HANH.sql` trên Neon trước khi deploy code V1.0.3
 
 ### Nâng cấp V1.0.39
 Chạy `16_KHOA_AUDIT_ADMIN_CHINH_DU_LIEU.sql` trên Neon sau SQL 15 và trước khi deploy V1.0.39. SQL 16 chỉ khóa `audit_logs` khỏi UPDATE/DELETE; không thay đổi dữ liệu nghiệp vụ hiện có. V1.0.39 bổ sung Trung tâm Admin và chức năng chỉnh dữ liệu nghiệp vụ có Audit.
+
+### Sửa lỗi V1.0.41 — phí lưu bồn XL-45
+
+Quy tắc chuẩn: ngày giao là ngày 1; miễn 15 ngày đầu; từ ngày thứ 16 bắt đầu tính phí; **ngày trả bồn cho NCC không tính phí**. Với bồn đã trả, khoảng chịu phí là từ `delivered_date + 15 ngày` đến `return_date - 1 ngày`. SQL 21 đi kèm dùng một lần để tính lại `charge_days` và `rental_amount` của dữ liệu XL-45 lịch sử.
+Khi nâng từ V1.0.39 đang chạy: chạy **SQL 20 trước, SQL 21 sau**, rồi mới deploy code V1.0.41.
+
 ### Nâng cấp V1.0.40 — Bảng đơn giá theo tháng
 
 Trên database đang chạy, **chạy SQL trước rồi mới deploy code**:
