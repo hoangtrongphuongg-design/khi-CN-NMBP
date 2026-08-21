@@ -4,6 +4,7 @@ import { isOfficeHours } from "@/lib/working-hours";
 import { applyStockDelta, audit, getGroupStockPoint, getStockPointByCode } from "@/lib/stock";
 import { checkLowStock } from "@/lib/notifications/low-stock";
 import { canApproveOfficeBorrow, canExecuteWarehouse, canReviewWarehouse } from "@/lib/auth/permissions";
+import { toDateInput } from "@/lib/utils";
 
 type RequestType = "exchange" | "borrow" | "return";
 export type InternalRequestItemInput = { productId: string; quantity: number };
@@ -317,4 +318,140 @@ export async function listInternalRequests(profile: Profile) {
     return sql.unsafe(`${base} WHERE ir.group_id=$1 ORDER BY ir.requested_at DESC LIMIT 200`, [profile.group_id]);
   }
   return sql.unsafe(`${base} ORDER BY ir.requested_at DESC LIMIT 200`);
+}
+
+export type AdminInternalCorrectionLine = {
+  itemId?: string | null;
+  productId: string;
+  requestedQty: number;
+  actualQty: number;
+  returnBucket?: "full" | "empty" | null;
+  delete?: boolean;
+};
+
+async function applyAdminInternalEffect(params: {
+  tx: any;
+  requestId: string;
+  requestType: RequestType;
+  groupId: string;
+  productId: string;
+  actualQty: number;
+  returnBucket?: "full" | "empty" | null;
+  sign: 1 | -1;
+  actorUserId: string;
+  occurredDate: string;
+}) {
+  const { tx, requestId, requestType, groupId, productId, actualQty, sign, actorUserId, occurredDate } = params;
+  if (!(actualQty > 0)) return;
+  const wh = await getStockPointByCode("WH-PHC", tx);
+  const gp = await getGroupStockPoint(groupId, tx);
+  const q = actualQty * sign;
+  if (requestType === "exchange") {
+    await applyStockDelta({ tx, stockPointId: wh.id, productId, bucket: "full", delta: -q, referenceType: "internal_exchange_admin_revision", referenceId: requestId, actorUserId, occurredDate, note: "Admin điều chỉnh Phiếu Đổi" });
+    await applyStockDelta({ tx, stockPointId: wh.id, productId, bucket: "empty", delta: q, referenceType: "internal_exchange_admin_revision", referenceId: requestId, actorUserId, occurredDate, note: "Admin điều chỉnh Phiếu Đổi" });
+  } else if (requestType === "borrow") {
+    await applyStockDelta({ tx, stockPointId: wh.id, productId, bucket: "full", delta: -q, referenceType: "internal_borrow_admin_revision", referenceId: requestId, actorUserId, occurredDate, note: "Admin điều chỉnh Phiếu Mượn" });
+    await applyStockDelta({ tx, stockPointId: gp.id, productId, bucket: "managed", delta: q, referenceType: "internal_borrow_admin_revision", referenceId: requestId, actorUserId, occurredDate, note: "Admin điều chỉnh Phiếu Mượn" });
+  } else {
+    const bucket = params.returnBucket === "full" ? "full" : "empty";
+    await applyStockDelta({ tx, stockPointId: gp.id, productId, bucket: "managed", delta: -q, referenceType: "internal_return_admin_revision", referenceId: requestId, actorUserId, occurredDate, note: "Admin điều chỉnh Phiếu Trả nội bộ" });
+    await applyStockDelta({ tx, stockPointId: wh.id, productId, bucket, delta: q, referenceType: "internal_return_admin_revision", referenceId: requestId, actorUserId, occurredDate, note: "Admin điều chỉnh Phiếu Trả nội bộ" });
+  }
+}
+
+export async function adminCorrectInternalRequest(profile: Profile, requestId: string, input: {
+  requestType: RequestType;
+  groupId: string;
+  requestedDate: string;
+  note?: string | null;
+  reason: string;
+  lines: AdminInternalCorrectionLine[];
+}) {
+  if (profile.role !== "admin") throw new Error("Chỉ Admin được chỉnh dữ liệu nghiệp vụ đã ghi nhận");
+  const reason = String(input.reason || "").trim();
+  if (!reason) throw new Error("Bắt buộc nhập lý do chỉnh sửa để lưu Audit");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.requestedDate)) throw new Error("Ngày phiếu không hợp lệ");
+  if (!["exchange","borrow","return"].includes(input.requestType)) throw new Error("Loại phiếu nội bộ không hợp lệ");
+  const lines = input.lines.filter((line) => !line.delete).map((line) => ({
+    ...line,
+    productId: String(line.productId || ""),
+    requestedQty: Number(line.requestedQty || 0),
+    actualQty: Number(line.actualQty || 0),
+  }));
+  if (!lines.length) throw new Error("Phiếu phải còn ít nhất một dòng");
+  if (lines.some((line) => !line.productId || line.requestedQty <= 0 || line.actualQty < 0)) throw new Error("Có dòng phiếu không hợp lệ");
+  if (new Set(lines.map((line) => line.productId)).size !== lines.length) throw new Error("Một loại khí chỉ được xuất hiện một lần");
+
+  await sql.begin(async (tx) => {
+    const [req] = await tx`
+      SELECT ir.*,g.name AS group_name
+      FROM internal_requests ir JOIN work_groups g ON g.id=ir.group_id
+      WHERE ir.id=${requestId}::uuid FOR UPDATE OF ir
+    `;
+    if (!req) throw new Error("Không tìm thấy Phiếu nội bộ");
+    const [group] = await tx`SELECT id,name,active FROM work_groups WHERE id=${input.groupId}::uuid LIMIT 1`;
+    if (!group?.active) throw new Error("Nhóm mới không hợp lệ");
+    const oldItems = await tx`
+      SELECT iri.id,iri.product_id,iri.requested_qty::float8 AS requested_qty,COALESCE(iri.actual_qty,0)::float8 AS actual_qty,
+        iri.return_bucket,iri.line_status,p.name AS product_name
+      FROM internal_request_items iri JOIN products p ON p.id=iri.product_id
+      WHERE iri.internal_request_id=${requestId}::uuid ORDER BY iri.created_at,iri.id FOR UPDATE OF iri
+    `;
+    const before = {
+      request: { request_type: req.request_type,group_id: req.group_id,group_name: req.group_name,requested_at: req.requested_at,status: req.status,note: req.note },
+      items: oldItems,
+    };
+    const effectsApplied = ["executed_pending_review","feedback","completed"].includes(String(req.status));
+    const oldDate = toDateInput(new Date(req.requested_at));
+
+    if (effectsApplied) {
+      for (const old of oldItems as any[]) {
+        await applyAdminInternalEffect({ tx,requestId,requestType:req.request_type,groupId:String(req.group_id),productId:String(old.product_id),actualQty:Number(old.actual_qty || 0),returnBucket:old.return_bucket,sign:-1,actorUserId:profile.id,occurredDate:oldDate });
+      }
+      for (const line of lines) {
+        await applyAdminInternalEffect({ tx,requestId,requestType:input.requestType,groupId:input.groupId,productId:line.productId,actualQty:Number(line.actualQty || 0),returnBucket:line.returnBucket,sign:1,actorUserId:profile.id,occurredDate:input.requestedDate });
+      }
+    }
+
+    const lineById = new Map(lines.filter((line) => line.itemId).map((line) => [String(line.itemId),line]));
+    for (const old of oldItems as any[]) {
+      const next = lineById.get(String(old.id));
+      if (!next) { await tx`DELETE FROM internal_request_items WHERE id=${old.id}::uuid`; continue; }
+      await tx`
+        UPDATE internal_request_items SET product_id=${next.productId}::uuid,requested_qty=${next.requestedQty},actual_qty=${next.actualQty},
+          return_bucket=${input.requestType === "return" ? (next.returnBucket === "full" ? "full" : "empty") : null},
+          line_status=${effectsApplied ? "executed" : "pending"}
+        WHERE id=${old.id}::uuid
+      `;
+    }
+    for (const line of lines.filter((line) => !line.itemId)) {
+      await tx`
+        INSERT INTO internal_request_items(internal_request_id,product_id,requested_qty,actual_qty,return_bucket,line_status)
+        VALUES (${requestId}::uuid,${line.productId}::uuid,${line.requestedQty},${effectsApplied ? line.actualQty : null},
+          ${input.requestType === "return" ? (line.returnBucket === "full" ? "full" : "empty") : null},${effectsApplied ? "executed" : "pending"})
+      `;
+    }
+    const [first] = lines;
+    const totalActual = lines.reduce((sum,line) => sum + Number(line.actualQty || 0),0);
+    await tx`
+      UPDATE internal_requests SET request_type=${input.requestType},group_id=${input.groupId}::uuid,
+        requested_at=((${input.requestedDate}::date + time '12:00') AT TIME ZONE 'Asia/Ho_Chi_Minh'),
+        note=${input.note || null},product_id=${first.productId}::uuid,requested_qty=${first.requestedQty},actual_qty=${effectsApplied ? totalActual : null},
+        return_bucket=NULL
+      WHERE id=${requestId}::uuid
+    `;
+    const afterItems = await tx`
+      SELECT iri.id,iri.product_id,iri.requested_qty::float8 AS requested_qty,COALESCE(iri.actual_qty,0)::float8 AS actual_qty,iri.return_bucket,p.name AS product_name
+      FROM internal_request_items iri JOIN products p ON p.id=iri.product_id
+      WHERE iri.internal_request_id=${requestId}::uuid ORDER BY iri.created_at,iri.id
+    `;
+    const [adjustment] = await tx`
+      INSERT INTO adjustment_notes(adjustment_code,original_reference_type,original_reference_id,reason,created_by)
+      VALUES (('ADM-'||to_char(now() AT TIME ZONE 'Asia/Ho_Chi_Minh','YYYYMMDDHH24MISS')||'-'||upper(substr(md5(random()::text),1,5))),
+        'internal_request',${requestId}::uuid,${reason},${profile.id}::uuid)
+      RETURNING adjustment_code
+    `;
+    await audit({ tx,actorUserId:profile.id,action:"admin_correct",entityType:"internal_request",entityId:requestId,before,
+      after:{ request:{ request_type:input.requestType,group_id:input.groupId,group_name:group.name,requested_date:input.requestedDate,status:req.status,note:input.note || null },items:afterItems,adjustment_code:adjustment.adjustment_code },note:reason });
+  });
 }

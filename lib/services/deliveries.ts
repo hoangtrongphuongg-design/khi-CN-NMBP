@@ -430,3 +430,333 @@ export async function listDeliveries(profile: Profile) {
   `;
   return query;
 }
+
+export type AdminDeliveryCorrectionLine = {
+  itemId?: string | null;
+  productId: string;
+  destinationLocationId: string;
+  declaredQty: number;
+  confirmedQty: number;
+  delete?: boolean;
+};
+
+async function applyAdminDeliveryEffect(params: {
+  tx: any;
+  product: any;
+  locationCode: "PLANT" | "MINE";
+  quantityDelta: number;
+  deliveryId: string;
+  actorUserId: string;
+  occurredDate: string;
+  historicalImport: boolean;
+}) {
+  const { tx, product, locationCode, quantityDelta, deliveryId, actorUserId, occurredDate, historicalImport } = params;
+  if (!product.returnable_container || Math.abs(quantityDelta) < 0.000001) return;
+  if (historicalImport) {
+    await recordHistoricalSupplierMovement({
+      tx,
+      productId: product.id,
+      delta: quantityDelta,
+      referenceType: "supplier_delivery_revision",
+      referenceId: deliveryId,
+      actorUserId,
+      occurredDate,
+      note: "Admin điều chỉnh Phiếu giao NCC; bút toán chênh lệch có Audit",
+    });
+    return;
+  }
+  if (locationCode === "PLANT") {
+    const wh = await getStockPointByCode("WH-PHC", tx);
+    const bucket = product.warehouse_split_full_empty ? "full" : "available";
+    await applyStockDelta({
+      tx,
+      stockPointId: wh.id,
+      productId: product.id,
+      bucket,
+      delta: quantityDelta,
+      referenceType: "supplier_delivery_revision",
+      referenceId: deliveryId,
+      actorUserId,
+      occurredDate,
+      note: "Admin điều chỉnh Phiếu giao NCC",
+    });
+    return;
+  }
+  const [mine] = await tx`
+    SELECT sp.id FROM stock_points sp
+    JOIN work_groups g ON g.id=sp.group_id
+    WHERE g.code='COI' AND sp.active=true LIMIT 1
+  `;
+  if (!mine) throw new Error("Chưa cấu hình điểm tồn Nhóm Cối/Mỏ");
+  await applyStockDelta({
+    tx,
+    stockPointId: mine.id,
+    productId: product.id,
+    bucket: "managed",
+    delta: quantityDelta,
+    referenceType: "supplier_delivery_revision",
+    referenceId: deliveryId,
+    actorUserId,
+    occurredDate,
+    note: "Admin điều chỉnh Phiếu giao NCC",
+  });
+}
+
+async function repriceXL45AllocationsForLot(tx: any, lotId: string, deliveredDate: string) {
+  const allocations = await tx`
+    SELECT id,return_date,quantity::float8 AS quantity
+    FROM xl45_return_allocations WHERE xl45_lot_id=${lotId}::uuid FOR UPDATE
+  `;
+  for (const allocation of allocations as any[]) {
+    const [cost] = await tx`
+      SELECT COUNT(*)::int AS charge_days,COALESCE(SUM((
+        SELECT pr.unit_price FROM price_rules pr
+        WHERE pr.price_type='xl45_rental_day' AND pr.effective_from<=d::date
+          AND (pr.effective_to IS NULL OR pr.effective_to>=d::date)
+        ORDER BY pr.effective_from DESC LIMIT 1
+      )),0)::float8 AS amount_per_bon
+      FROM generate_series(${deliveredDate}::date + interval '15 day',${toDateKey(allocation.return_date)}::date,interval '1 day') AS gs(d)
+    `;
+    await tx`UPDATE xl45_return_allocations SET charge_days=${Number(cost?.charge_days || 0)},rental_amount=${Number(cost?.amount_per_bon || 0)*Number(allocation.quantity || 0)} WHERE id=${allocation.id}::uuid`;
+  }
+}
+
+/**
+ * Admin sửa trực tiếp dữ liệu nghiệp vụ Phiếu giao NCC nhưng không sửa/xóa Audit.
+ * Nếu Phiếu đã hoàn tất, hệ thống đảo ảnh hưởng cũ và áp dụng ảnh hưởng mới bằng bút toán chênh lệch.
+ */
+export async function adminCorrectSupplierDelivery(profile: Profile, deliveryId: string, input: {
+  deliveryDate: string;
+  note?: string | null;
+  reason: string;
+  lines: AdminDeliveryCorrectionLine[];
+}) {
+  if (profile.role !== "admin") throw new Error("Chỉ Admin được chỉnh dữ liệu nghiệp vụ đã ghi nhận");
+  const reason = String(input.reason || "").trim();
+  if (!reason) throw new Error("Bắt buộc nhập lý do chỉnh sửa để lưu Audit");
+  const lines = input.lines.filter((line) => !line.delete).map((line) => ({
+    ...line,
+    productId: String(line.productId || ""),
+    destinationLocationId: String(line.destinationLocationId || ""),
+    declaredQty: Number(line.declaredQty || 0),
+    confirmedQty: Number(line.confirmedQty || 0),
+  }));
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.deliveryDate)) throw new Error("Ngày giao không hợp lệ");
+  if (!lines.length) throw new Error("Phiếu giao phải còn ít nhất một dòng hàng");
+  if (lines.some((line) => !line.productId || !line.destinationLocationId || line.declaredQty <= 0 || line.confirmedQty < 0)) {
+    throw new Error("Có dòng hàng thiếu thông tin hoặc số lượng không hợp lệ");
+  }
+  const uniqueKeys = lines.map((line) => `${line.destinationLocationId}:${line.productId}`);
+  if (new Set(uniqueKeys).size !== uniqueKeys.length) throw new Error("Mỗi loại khí chỉ được có một dòng tại cùng địa điểm");
+
+  await sql.begin(async (tx) => {
+    const [delivery] = await tx`
+      SELECT d.*,t.id AS transport_trip_id,t.trip_date,t.visits_plant,t.visits_mine,t.trip_kind,t.transport_unit_price,t.transport_amount
+      FROM supplier_deliveries d
+      LEFT JOIN transport_trips t ON t.id=d.trip_id
+      WHERE d.id=${deliveryId}::uuid
+      FOR UPDATE OF d
+    `;
+    if (!delivery) throw new Error("Không tìm thấy Phiếu giao NCC");
+    const oldItems = await tx`
+      SELECT di.id,di.product_id,di.destination_location_id,di.declared_qty::float8 AS declared_qty,
+        COALESCE(di.confirmed_qty,0)::float8 AS confirmed_qty,di.status,di.unit_price::float8 AS unit_price,
+        p.code AS product_code,p.name AS product_name,p.returnable_container,p.warehouse_split_full_empty,
+        l.code AS location_code,l.name AS location_name,
+        xl.id AS xl45_lot_id,xl.qty_received::float8 AS xl45_qty_received,xl.qty_outstanding::float8 AS xl45_qty_outstanding,
+        EXISTS(SELECT 1 FROM xl45_return_allocations xa WHERE xa.xl45_lot_id=xl.id) AS xl45_has_return
+      FROM supplier_delivery_items di
+      JOIN products p ON p.id=di.product_id
+      JOIN locations l ON l.id=di.destination_location_id
+      LEFT JOIN xl45_lots xl ON xl.delivery_item_id=di.id
+      WHERE di.delivery_id=${deliveryId}::uuid
+      ORDER BY l.code,p.display_order,p.name
+      FOR UPDATE OF di
+    `;
+    const before = {
+      delivery: {
+        delivery_date: toDateKey(delivery.delivery_date),
+        note: delivery.note,
+        status: delivery.status,
+        trip_id: delivery.trip_id,
+        trip_date: delivery.trip_date ? toDateKey(delivery.trip_date) : null,
+        visits_plant: delivery.visits_plant,
+        visits_mine: delivery.visits_mine,
+        trip_kind: delivery.trip_kind,
+        transport_amount: Number(delivery.transport_amount || 0),
+      },
+      items: oldItems,
+    };
+
+    const productIds = Array.from(new Set([
+      ...lines.map((line) => line.productId),
+      ...(oldItems as any[]).map((item:any) => String(item.product_id)),
+    ]));
+    const locationIds = Array.from(new Set([
+      ...lines.map((line) => line.destinationLocationId),
+      ...(oldItems as any[]).map((item:any) => String(item.destination_location_id)),
+    ]));
+    const products = await tx`
+      SELECT id,code,name,returnable_container,warehouse_split_full_empty,active
+      FROM products WHERE id IN ${tx(productIds)}
+    `;
+    const locations = await tx`SELECT id,code,name,active FROM locations WHERE id IN ${tx(locationIds)}`;
+    const productById = new Map((products as any[]).map((row:any) => [String(row.id), row]));
+    const locationById = new Map((locations as any[]).map((row:any) => [String(row.id), row]));
+    for (const line of lines) {
+      const product = productById.get(line.productId) as any;
+      const location = locationById.get(line.destinationLocationId) as any;
+      if (!product?.active) throw new Error("Có loại khí không còn hoạt động");
+      if (!location?.active || !["PLANT","MINE"].includes(location.code)) throw new Error("Địa điểm giao chỉ được là Nhà máy hoặc Mỏ");
+    }
+
+    const operationState = await getSystemOperationState(tx);
+    const historicalImport = operationState.mode === "historical_import";
+    const effectsApplied = delivery.status === "completed";
+    const oldDate = toDateKey(delivery.delivery_date);
+
+    if (effectsApplied) {
+      for (const old of oldItems as any[]) {
+        const product = productById.get(String(old.product_id)) as any;
+        await applyAdminDeliveryEffect({
+          tx,
+          product,
+          locationCode: old.location_code,
+          quantityDelta: -Number(old.confirmed_qty || 0),
+          deliveryId,
+          actorUserId: profile.id,
+          occurredDate: oldDate,
+          historicalImport,
+        });
+      }
+      for (const line of lines) {
+        const product = productById.get(line.productId) as any;
+        const location = locationById.get(line.destinationLocationId) as any;
+        await applyAdminDeliveryEffect({
+          tx,
+          product,
+          locationCode: location.code,
+          quantityDelta: Number(line.confirmedQty || 0),
+          deliveryId,
+          actorUserId: profile.id,
+          occurredDate: input.deliveryDate,
+          historicalImport,
+        });
+      }
+    }
+
+    const lineById = new Map(lines.filter((line) => line.itemId).map((line) => [String(line.itemId), line]));
+    for (const old of oldItems as any[]) {
+      const next = lineById.get(String(old.id));
+      if (!next) {
+        if (old.xl45_has_return) throw new Error(`${old.product_name}: đã có lịch sử trả XL-45, không thể xóa dòng. Hãy điều chỉnh số lượng thay vì xóa.`);
+        await tx`DELETE FROM supplier_delivery_items WHERE id=${old.id}::uuid`;
+        continue;
+      }
+      if (old.xl45_has_return && (String(old.product_id) !== next.productId || String(old.destination_location_id) !== next.destinationLocationId)) {
+        throw new Error(`${old.product_name}: đã có lịch sử trả XL-45, không thể đổi loại hoặc địa điểm.`);
+      }
+      await tx`
+        UPDATE supplier_delivery_items
+        SET product_id=${next.productId}::uuid,
+            destination_location_id=${next.destinationLocationId}::uuid,
+            declared_qty=${next.declaredQty},
+            confirmed_qty=${next.confirmedQty}
+        WHERE id=${old.id}::uuid
+      `;
+      if (old.xl45_lot_id) {
+        const returned = Number(old.xl45_qty_received || 0) - Number(old.xl45_qty_outstanding || 0);
+        if (next.confirmedQty + 0.000001 < returned) throw new Error(`${old.product_name}: số mới nhỏ hơn số bồn XL-45 đã trả.`);
+        await tx`
+          UPDATE xl45_lots SET product_id=${next.productId}::uuid,location_id=${next.destinationLocationId}::uuid,
+            delivered_date=${input.deliveryDate}::date,qty_received=${next.confirmedQty},qty_outstanding=${Math.max(0,next.confirmedQty-returned)}
+          WHERE id=${old.xl45_lot_id}::uuid
+        `;
+        if (old.xl45_has_return) await repriceXL45AllocationsForLot(tx,String(old.xl45_lot_id),input.deliveryDate);
+      }
+    }
+    for (const line of lines.filter((line) => !line.itemId)) {
+      const [created] = await tx`
+        INSERT INTO supplier_delivery_items(delivery_id,product_id,destination_location_id,declared_qty,confirmed_qty,status,confirmed_by,confirmed_at)
+        VALUES (${deliveryId}::uuid,${line.productId}::uuid,${line.destinationLocationId}::uuid,${line.declaredQty},${line.confirmedQty},
+          ${effectsApplied ? "confirmed" : "pending"},${effectsApplied ? profile.id : null}::uuid,${effectsApplied ? new Date() : null}::timestamptz)
+        RETURNING id
+      `;
+      const product = productById.get(line.productId) as any;
+      if (effectsApplied && ["LOX-XL45","LIN-XL45"].includes(String(product.code)) && line.confirmedQty > 0) {
+        await tx`
+          INSERT INTO xl45_lots(delivery_item_id,product_id,location_id,delivered_date,qty_received,qty_outstanding)
+          VALUES (${created.id}::uuid,${line.productId}::uuid,${line.destinationLocationId}::uuid,${input.deliveryDate}::date,${line.confirmedQty},${line.confirmedQty})
+        `;
+      }
+    }
+
+    await tx`UPDATE supplier_deliveries SET delivery_date=${input.deliveryDate}::date,note=${input.note || null} WHERE id=${deliveryId}::uuid`;
+
+    const currentItems = await tx`
+      SELECT di.id,di.product_id,di.destination_location_id,di.declared_qty::float8 AS declared_qty,
+        COALESCE(di.confirmed_qty,0)::float8 AS confirmed_qty,di.status,p.code AS product_code,p.name AS product_name,
+        l.code AS location_code,l.name AS location_name
+      FROM supplier_delivery_items di
+      JOIN products p ON p.id=di.product_id JOIN locations l ON l.id=di.destination_location_id
+      WHERE di.delivery_id=${deliveryId}::uuid ORDER BY l.code,p.display_order,p.name
+    `;
+    const visitsPlant = (currentItems as any[]).some((item:any) => item.location_code === "PLANT");
+    const visitsMine = (currentItems as any[]).some((item:any) => item.location_code === "MINE");
+    const co2Special = (currentItems as any[]).some((item:any) => item.product_code === "LIQ-CO2");
+    if (delivery.trip_id) {
+      const returnLocations = await tx`
+        SELECT DISTINCT l.code FROM supplier_returns r JOIN locations l ON l.id=r.source_location_id
+        WHERE r.trip_id=${delivery.trip_id}::uuid AND r.status<>'cancelled'
+      `;
+      if ((returnLocations as any[]).some((row:any)=>row.code==='PLANT') && !visitsPlant) throw new Error("Chuyến đã có Phiếu trả vỏ Nhà máy; không thể xóa toàn bộ điểm giao Nhà máy khỏi chuyến");
+      if ((returnLocations as any[]).some((row:any)=>row.code==='MINE') && !visitsMine) throw new Error("Chuyến đã có Phiếu trả vỏ Mỏ; không thể xóa toàn bộ điểm giao Mỏ khỏi chuyến");
+    }
+    const tripKind = co2Special ? "co2_liquid" : visitsMine ? "mine" : "plant";
+    const tripPrice = await resolvePriceRule(tripPriceType(visitsMine,co2Special),input.deliveryDate,null,tx);
+    if (!tripPrice) throw new Error("Không có đơn giá vận chuyển có hiệu lực cho ngày mới");
+    if (delivery.trip_id) {
+      await tx`
+        UPDATE transport_trips SET trip_date=${input.deliveryDate}::date,visits_plant=${visitsPlant},visits_mine=${visitsMine},
+          co2_liquid_special=${co2Special},trip_kind=${tripKind},price_rule_id=${tripPrice.id}::uuid,
+          transport_unit_price=${Number(tripPrice.unit_price)},transport_amount=${Number(tripPrice.unit_price)},note=${input.note || null}
+        WHERE id=${delivery.trip_id}::uuid
+      `;
+    }
+
+    if (effectsApplied) {
+      for (const item of currentItems as any[]) {
+        const price = await resolvePriceRule("product",input.deliveryDate,item.product_id,tx);
+        const unitPrice = price ? Number(price.unit_price) : null;
+        const amount = unitPrice == null ? null : unitPrice * Number(item.confirmed_qty || 0);
+        await tx`
+          UPDATE supplier_delivery_items SET status='confirmed',price_rule_id=${price?.id || null}::uuid,
+            unit_price=${unitPrice},line_amount=${amount}
+          WHERE id=${item.id}::uuid
+        `;
+      }
+    }
+
+    const [adjustment] = await tx`
+      INSERT INTO adjustment_notes(adjustment_code,original_reference_type,original_reference_id,reason,created_by)
+      VALUES (('ADM-'||to_char(now() AT TIME ZONE 'Asia/Ho_Chi_Minh','YYYYMMDDHH24MISS')||'-'||upper(substr(md5(random()::text),1,5))),
+        'supplier_delivery',${deliveryId}::uuid,${reason},${profile.id}::uuid)
+      RETURNING id,adjustment_code
+    `;
+    const after = {
+      delivery: { delivery_date: input.deliveryDate, note: input.note || null, status: delivery.status, visits_plant: visitsPlant, visits_mine: visitsMine, trip_kind: tripKind, transport_amount: Number(tripPrice.unit_price) },
+      items: currentItems,
+      adjustment_code: adjustment.adjustment_code,
+    };
+    await audit({
+      tx,
+      actorUserId: profile.id,
+      action: "admin_correct",
+      entityType: "supplier_delivery",
+      entityId: deliveryId,
+      before,
+      after,
+      note: reason,
+    });
+  });
+}

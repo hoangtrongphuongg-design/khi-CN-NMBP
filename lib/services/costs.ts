@@ -164,6 +164,7 @@ export async function getCylinderRentalDaily(params: {
         + COALESCE(SUM(
             CASE
               WHEN sl.reference_type IN ('supplier_delivery','supplier_delivery_mine') AND sl.delta>0 THEN sl.delta
+              WHEN sl.reference_type='supplier_delivery_revision' THEN sl.delta
               WHEN sl.reference_type='supplier_return' AND sl.delta<0 THEN sl.delta
               WHEN sl.reference_type='supplier_return_revision' THEN sl.delta
               ELSE 0
@@ -180,7 +181,8 @@ export async function getCylinderRentalDaily(params: {
     ) held ON true
     LEFT JOIN LATERAL (
       SELECT
-        COALESCE(SUM(CASE WHEN sl.reference_type IN ('supplier_delivery','supplier_delivery_mine') AND sl.delta>0 THEN sl.delta ELSE 0 END),0)::numeric AS supplier_in,
+        COALESCE(SUM(CASE WHEN sl.reference_type IN ('supplier_delivery','supplier_delivery_mine') AND sl.delta>0 THEN sl.delta
+              WHEN sl.reference_type='supplier_delivery_revision' THEN sl.delta ELSE 0 END),0)::numeric AS supplier_in,
         COALESCE(SUM(CASE
           WHEN sl.reference_type='supplier_return' AND sl.delta<0 THEN -sl.delta
           WHEN sl.reference_type='supplier_return_revision' THEN -sl.delta

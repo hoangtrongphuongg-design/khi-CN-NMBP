@@ -326,7 +326,8 @@ export async function createContract(profile: Profile, input: {
 
 export async function listAuditLogs(limit = 300) {
   return sql`
-    SELECT a.id,a.action,a.entity_type,a.entity_id,a.note,a.created_at,u.full_name AS actor_name,u.username AS actor_username
+    SELECT a.id,a.action,a.entity_type,a.entity_id,a.note,a.before_data,a.after_data,a.created_at,
+      u.full_name AS actor_name,u.username AS actor_username
     FROM audit_logs a
     LEFT JOIN users u ON u.id=a.actor_user_id
     ORDER BY a.created_at DESC
@@ -386,6 +387,7 @@ async function supplierContainerSnapshotAt(dateKey: string, cutoverId?: string |
     LEFT JOIN LATERAL (
       SELECT COALESCE(SUM(CASE
         WHEN sl.reference_type IN ('supplier_delivery','supplier_delivery_mine') AND sl.delta>0 THEN sl.delta
+              WHEN sl.reference_type='supplier_delivery_revision' THEN sl.delta
         WHEN sl.reference_type='supplier_return' AND sl.delta<0 THEN sl.delta
         WHEN sl.reference_type='supplier_return_revision' THEN sl.delta
         ELSE 0 END),0)::numeric AS net_delta
@@ -582,4 +584,121 @@ export async function finalizeInventoryCutover(profile: Profile, cutoverId: stri
       note: "Chốt kiểm kê và chuyển hệ thống từ Hồi nhập lịch sử sang Vận hành chính thức." });
   });
   for (const productId of lowStockProducts) await checkLowStock(productId);
+}
+
+export type AdminOperationalType = "supplier_delivery" | "supplier_return" | "internal_request" | "transfer";
+
+export async function listAdminOperationalRecords(params?: { q?: string; type?: string; limit?: number }) {
+  const q = String(params?.q || "").trim();
+  const type = String(params?.type || "all");
+  const limit = Math.min(Math.max(Number(params?.limit || 120),20),300);
+  return sql`
+    WITH records AS (
+      SELECT d.id,'supplier_delivery'::text AS entity_type,d.delivery_code AS code,d.delivery_date::date AS event_date,
+        d.status,o.name AS owner_name,d.note,d.created_at
+      FROM supplier_deliveries d JOIN organizations o ON o.id=d.supplier_org_id
+      UNION ALL
+      SELECT r.id,'supplier_return',r.return_code,r.return_date::date,
+        CASE WHEN r.warehouse_review_status='feedback' THEN 'feedback' ELSE r.status END,o.name,r.note,r.created_at
+      FROM supplier_returns r JOIN organizations o ON o.id=r.supplier_org_id
+      UNION ALL
+      SELECT ir.id,'internal_request',ir.request_code,(ir.requested_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date,
+        ir.status,g.name,ir.note,ir.created_at
+      FROM internal_requests ir JOIN work_groups g ON g.id=ir.group_id
+      UNION ALL
+      SELECT t.id,'transfer',t.transfer_code,t.transfer_date::date,t.status,
+        CASE WHEN t.direction='plant_to_mine' THEN 'Nhà máy → Mỏ' ELSE 'Mỏ → Nhà máy' END,t.note,t.created_at
+      FROM transfers t
+    )
+    SELECT * FROM records
+    WHERE (${type}='all' OR entity_type=${type})
+      AND (${q}='' OR code ILIKE ${`%${q}%`} OR COALESCE(owner_name,'') ILIKE ${`%${q}%`} OR COALESCE(note,'') ILIKE ${`%${q}%`})
+    ORDER BY CASE WHEN status IN ('feedback','pending','phc_pending','approved','executed_pending_review') THEN 0 ELSE 1 END,
+      event_date DESC,created_at DESC
+    LIMIT ${limit}
+  `;
+}
+
+export async function getAdminOperationalRecord(type: AdminOperationalType, id: string) {
+  if (!id) return null;
+  if (type === "supplier_delivery") {
+    const [header] = await sql`
+      SELECT d.id,d.delivery_code,d.delivery_date,d.status,d.note,d.trip_id,o.name AS supplier_name,
+        t.trip_code,t.trip_date,t.visits_plant,t.visits_mine,t.trip_kind,t.transport_amount::float8 AS transport_amount
+      FROM supplier_deliveries d JOIN organizations o ON o.id=d.supplier_org_id
+      LEFT JOIN transport_trips t ON t.id=d.trip_id
+      WHERE d.id=${id}::uuid LIMIT 1
+    `;
+    if (!header) return null;
+    const items = await sql`
+      SELECT di.id,di.product_id,di.destination_location_id,di.declared_qty::float8 AS declared_qty,
+        COALESCE(di.confirmed_qty,0)::float8 AS confirmed_qty,di.status,di.feedback,di.unit_price::float8 AS unit_price,
+        di.line_amount::float8 AS line_amount,p.code AS product_code,p.name AS product_name,l.code AS location_code,l.name AS location_name
+      FROM supplier_delivery_items di JOIN products p ON p.id=di.product_id JOIN locations l ON l.id=di.destination_location_id
+      WHERE di.delivery_id=${id}::uuid ORDER BY l.code,p.display_order,p.name
+    `;
+    return { type,header,items };
+  }
+  if (type === "supplier_return") {
+    const [header] = await sql`
+      SELECT r.id,r.return_code,r.return_date,r.status,r.note,r.source_location_id,r.warehouse_review_status,r.warehouse_review_note,
+        l.code AS location_code,l.name AS location_name,o.name AS supplier_name,t.trip_code
+      FROM supplier_returns r JOIN locations l ON l.id=r.source_location_id JOIN organizations o ON o.id=r.supplier_org_id
+      LEFT JOIN transport_trips t ON t.id=r.trip_id WHERE r.id=${id}::uuid LIMIT 1
+    `;
+    if (!header) return null;
+    const items = await sql`
+      SELECT ri.id,ri.product_id,ri.declared_qty::float8 AS declared_qty,COALESCE(ri.confirmed_qty,ri.declared_qty)::float8 AS confirmed_qty,
+        ri.status,ri.feedback,p.code AS product_code,p.name AS product_name
+      FROM supplier_return_items ri JOIN products p ON p.id=ri.product_id
+      WHERE ri.supplier_return_id=${id}::uuid ORDER BY p.display_order,p.name
+    `;
+    return { type,header,items };
+  }
+  if (type === "internal_request") {
+    const [header] = await sql`
+      SELECT ir.id,ir.request_code,ir.request_type,ir.group_id,ir.requested_at,ir.status,ir.note,ir.feedback,g.name AS group_name,u.full_name AS requested_by_name
+      FROM internal_requests ir JOIN work_groups g ON g.id=ir.group_id JOIN users u ON u.id=ir.requested_by
+      WHERE ir.id=${id}::uuid LIMIT 1
+    `;
+    if (!header) return null;
+    const items = await sql`
+      SELECT iri.id,iri.product_id,iri.requested_qty::float8 AS requested_qty,COALESCE(iri.actual_qty,0)::float8 AS actual_qty,
+        iri.return_bucket,iri.line_status,p.code AS product_code,p.name AS product_name
+      FROM internal_request_items iri JOIN products p ON p.id=iri.product_id
+      WHERE iri.internal_request_id=${id}::uuid ORDER BY iri.created_at,iri.id
+    `;
+    return { type,header,items };
+  }
+  const [header] = await sql`
+    SELECT t.id,t.transfer_code,t.direction,t.transfer_date,t.status,t.note,t.feedback,u.full_name AS created_by_name
+    FROM transfers t JOIN users u ON u.id=t.created_by WHERE t.id=${id}::uuid LIMIT 1
+  `;
+  if (!header) return null;
+  const items = await sql`
+    SELECT ti.id,ti.product_id,ti.quantity::float8 AS quantity,COALESCE(ti.received_qty,ti.quantity)::float8 AS received_qty,
+      ti.source_bucket,p.code AS product_code,p.name AS product_name
+    FROM transfer_items ti JOIN products p ON p.id=ti.product_id
+    WHERE ti.transfer_id=${id}::uuid ORDER BY p.display_order,p.name
+  `;
+  return { type,header,items };
+}
+
+export async function getAdminControlSummary() {
+  const [state] = await sql`SELECT mode,stocktake_date,go_live_date,updated_at FROM system_operation_state WHERE id=1 LIMIT 1`;
+  const [pending] = await sql`
+    SELECT
+      (SELECT count(*)::int FROM supplier_deliveries WHERE status NOT IN ('completed','cancelled')) AS deliveries,
+      (SELECT count(*)::int FROM supplier_returns WHERE status<>'cancelled' AND (status<>'completed' OR warehouse_review_status<>'approved')) AS returns,
+      (SELECT count(*)::int FROM internal_requests WHERE status IN ('pending','approved','executed_pending_review','feedback')) AS internal,
+      (SELECT count(*)::int FROM transfers WHERE status IN ('pending','feedback','received_pending_review')) AS transfers
+  `;
+  const [corrections] = await sql`SELECT count(*)::int AS total FROM audit_logs WHERE action='admin_correct'`;
+  const [notices] = await sql`SELECT count(*) FILTER (WHERE status='failed')::int AS failed,count(*) FILTER (WHERE status='pending')::int AS pending FROM notification_outbox`;
+  return {
+    state: state || { mode: "historical_import", stocktake_date: null, go_live_date: null },
+    pending: pending || { deliveries:0,returns:0,internal:0,transfers:0 },
+    corrections: Number(corrections?.total || 0),
+    notifications: notices || { failed:0,pending:0 },
+  };
 }

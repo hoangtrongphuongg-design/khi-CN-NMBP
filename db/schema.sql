@@ -451,6 +451,18 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 CREATE INDEX IF NOT EXISTS audit_logs_entity_idx ON audit_logs(entity_type, entity_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS audit_logs_actor_idx ON audit_logs(actor_user_id, created_at DESC);
 
+-- Audit là sổ bất biến: ứng dụng chỉ được INSERT, không UPDATE/DELETE lịch sử đã ghi.
+CREATE OR REPLACE FUNCTION prevent_audit_log_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'audit_logs is immutable';
+END;
+$$;
+DROP TRIGGER IF EXISTS audit_logs_no_update ON audit_logs;
+CREATE TRIGGER audit_logs_no_update BEFORE UPDATE ON audit_logs FOR EACH ROW EXECUTE FUNCTION prevent_audit_log_mutation();
+DROP TRIGGER IF EXISTS audit_logs_no_delete ON audit_logs;
+CREATE TRIGGER audit_logs_no_delete BEFORE DELETE ON audit_logs FOR EACH ROW EXECUTE FUNCTION prevent_audit_log_mutation();
+
 CREATE OR REPLACE VIEW inventory_status_v AS
 SELECT
   sp.code AS point_code,

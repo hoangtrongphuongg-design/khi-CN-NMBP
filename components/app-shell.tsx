@@ -26,7 +26,7 @@ function item(key: string, label?: string, icon?: NavItem["icon"]): NavItem {
 function navFor(profile: Profile): NavItem[] {
   let nav: NavItem[];
   switch (profile.role) {
-    case "admin": nav = [item("dashboard"), item("inventory"), item("internal","Yêu cầu nội bộ",ClipboardCheck), item("admin")]; break;
+    case "admin": nav = [item("dashboard"), item("deliveries","Giao nhận NCC"), item("internal","Phiếu nội bộ",ClipboardCheck), item("transfers","Điều phối"), item("inventory"), item("admin","Trung tâm quản trị")]; break;
     case "supplier": nav = [item("dashboard"), item("deliveries","Phiếu giao NCC")]; break;
     case "foreman": case "supervisor": nav = [item("dashboard"), item("internal","Đổi · Mượn · Trả"), item("inventory")]; break;
     case "worker": nav = [item("dashboard"), item("inventory")]; break;

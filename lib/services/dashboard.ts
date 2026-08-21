@@ -160,6 +160,7 @@ export async function getRentalSnapshot(): Promise<RentalSnapshot> {
       COALESCE(ob.qty,0)::float8 AS opening_qty,
       COALESCE(SUM(CASE
         WHEN sl.reference_type IN ('supplier_delivery','supplier_delivery_mine') AND sl.delta>0 THEN sl.delta
+              WHEN sl.reference_type='supplier_delivery_revision' THEN sl.delta
         ELSE 0
       END),0)::float8 AS supplier_in,
       COALESCE(SUM(CASE
@@ -175,7 +176,7 @@ export async function getRentalSnapshot(): Promise<RentalSnapshot> {
       ON sl.product_id=p.id
      AND sl.occurred_at >= (${yearStart}::date AT TIME ZONE 'Asia/Ho_Chi_Minh')
      AND sl.occurred_at < (${endDateExclusive}::date AT TIME ZONE 'Asia/Ho_Chi_Minh')
-     AND sl.reference_type IN ('supplier_delivery','supplier_delivery_mine','supplier_return','supplier_return_revision')
+     AND sl.reference_type IN ('supplier_delivery','supplier_delivery_mine','supplier_delivery_revision','supplier_return','supplier_return_revision')
     WHERE p.active=true
       AND p.returnable_container=true
     GROUP BY p.id,p.code,p.name,p.display_order,ob.qty

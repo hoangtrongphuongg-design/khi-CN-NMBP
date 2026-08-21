@@ -83,7 +83,7 @@ export async function getSystemOperationState(tx: any = sql): Promise<SystemOper
 export async function recordHistoricalSupplierMovement(params: {
   productId: string;
   delta: number;
-  referenceType: "supplier_delivery" | "supplier_delivery_mine" | "supplier_return" | "supplier_return_revision";
+  referenceType: "supplier_delivery" | "supplier_delivery_mine" | "supplier_delivery_revision" | "supplier_return" | "supplier_return_revision";
   referenceId: string;
   actorUserId?: string | null;
   occurredDate: string;

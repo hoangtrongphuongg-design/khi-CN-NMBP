@@ -22,6 +22,7 @@ import { Badge } from "@/components/ui/badge";
 import { requireProfile } from "@/lib/auth/session";
 import { canCreateGroupRequest } from "@/lib/auth/permissions";
 import { getCostSnapshot, getDashboardData, getGroupUsageSnapshot, getRentalSnapshot } from "@/lib/services/dashboard";
+import { getAdminControlSummary } from "@/lib/services/admin";
 import { getGroupQuickData, listInternalRequests } from "@/lib/services/internal";
 import { listDeliveries } from "@/lib/services/deliveries";
 import { listSupplierReturns } from "@/lib/services/supplier-returns";
@@ -408,28 +409,43 @@ async function ManagementHome({ profile }: { profile: Profile }) {
 }
 
 async function AdminHome() {
-  const [userRow, priceRow, notificationRow] = await Promise.all([
+  const [userRow, priceRow, summary, recentAudit] = await Promise.all([
     sql<any[]>`SELECT count(*)::int AS total,count(*) FILTER (WHERE active)::int AS active FROM users`,
     sql<any[]>`SELECT count(*) FILTER (WHERE effective_to IS NOT NULL AND effective_to BETWEEN CURRENT_DATE AND CURRENT_DATE+interval '45 days')::int AS expiring,count(*) FILTER (WHERE effective_to<CURRENT_DATE)::int AS expired FROM price_rules`,
-    sql<any[]>`SELECT count(*) FILTER (WHERE status='failed')::int AS failed,count(*) FILTER (WHERE status='pending')::int AS pending FROM notification_outbox`,
+    getAdminControlSummary(),
+    sql<any[]>`SELECT a.id,a.action,a.entity_type,a.note,a.created_at,u.full_name AS actor_name FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_user_id ORDER BY a.created_at DESC LIMIT 6`,
   ]);
   const users = userRow[0] || { total: 0, active: 0 };
   const prices = priceRow[0] || { expiring: 0, expired: 0 };
-  const notices = notificationRow[0] || { failed: 0, pending: 0 };
-  return <div className="overview-page">
-    <PageHeading title="Tổng quan quản trị" subtitle="Chỉ hiển thị cấu hình và tình trạng hệ thống; không lặp dữ liệu vận hành."/>
+  const pendingTotal = Number(summary.pending.deliveries||0)+Number(summary.pending.returns||0)+Number(summary.pending.internal||0)+Number(summary.pending.transfers||0);
+  const noticeTotal = Number(summary.notifications.failed||0)+Number(summary.notifications.pending||0);
+  const live = summary.state.mode === "live";
+  return <div className="overview-page admin-overview">
+    <PageHeading title="Tổng quan quản trị" subtitle="Trung tâm kiểm soát dữ liệu, Audit, kiểm kê chuyển đổi và cấu hình hệ thống."/>
     <MetricGrid>
-      <Metric icon={<UserRoundCog/>} label="User hoạt động" value={users.active} suffix={`/ ${users.total}`}/>
-      <Metric icon={<Clock3/>} label="Đơn giá sắp hết hạn" value={prices.expiring} tone={prices.expiring ? "warning" : "success"}/>
-      <Metric icon={<AlertTriangle/>} label="Đơn giá đã hết hạn" value={prices.expired} tone={prices.expired ? "warning" : "success"}/>
-      <Metric icon={<MessageCircleWarning/>} label="Email lỗi/chờ" value={Number(notices.failed || 0)+Number(notices.pending || 0)} tone={notices.failed ? "warning" : "success"}/>
+      <Link href="/admin?tab=cutover" className={`overview-metric admin-mode-metric ${live?"tone-success":"tone-warning"}`}><div className="overview-metric-icon"><Settings/></div><div className="min-w-0"><div className="overview-metric-label">Chế độ hệ thống</div><div className="overview-metric-value admin-mode-value">{live?"Vận hành":"Hồi nhập"}</div><div className="overview-metric-foot">{live&&summary.state.go_live_date?`Từ ${toDateKey(summary.state.go_live_date)}`:"Chưa chốt vận hành"}</div></div></Link>
+      <Link href="/admin?tab=data" className="overview-metric tone-warning"><div className="overview-metric-icon"><ClipboardCheck/></div><div className="min-w-0"><div className="overview-metric-label">Dữ liệu đang xử lý</div><div className="overview-metric-value">{formatNumber(pendingTotal)}<span>phiếu</span></div><div className="overview-metric-foot">Bấm để tra cứu / chỉnh dữ liệu</div></div></Link>
+      <Link href="/admin?tab=audit" className="overview-metric tone-brand"><div className="overview-metric-icon"><FileSpreadsheet/></div><div className="min-w-0"><div className="overview-metric-label">Lần chỉnh Admin</div><div className="overview-metric-value">{formatNumber(summary.corrections)}</div><div className="overview-metric-foot">Audit không được sửa/xóa</div></div></Link>
+      <Link href="/admin?tab=prices" className={`overview-metric ${Number(prices.expired||0)>0?"tone-warning":"tone-success"}`}><div className="overview-metric-icon"><CircleDollarSign/></div><div className="min-w-0"><div className="overview-metric-label">Đơn giá cần chú ý</div><div className="overview-metric-value">{formatNumber(Number(prices.expiring||0)+Number(prices.expired||0))}</div><div className="overview-metric-foot">Hết hạn: {formatNumber(prices.expired||0)}</div></div></Link>
     </MetricGrid>
-    <QuickActions items={[
-      { href: "/admin", label: "Quản lý user", icon: <UserRoundCog/> },
-      { href: "/admin", label: "Cập nhật đơn giá", icon: <CircleDollarSign/> },
-      { href: "/admin", label: "Ngưỡng tồn", icon: <AlertTriangle/> },
-      { href: "/admin", label: "Lịch làm việc", icon: <Settings/> },
-    ]}/>
+
+    <section className="admin-control-grid">
+      <Link href="/admin?tab=data" className="admin-control-card is-primary"><div className="admin-control-icon"><ClipboardCheck/></div><div><strong>Chỉnh sửa dữ liệu nghiệp vụ</strong><span>Giao/Trả NCC, Đổi/Mượn/Trả, Điều chuyển. Bắt buộc lý do và lưu trước/sau.</span></div><b>→</b></Link>
+      <Link href="/admin?tab=cutover" className="admin-control-card"><div className="admin-control-icon"><CalendarCheck2/></div><div><strong>Kiểm kê & chốt vận hành</strong><span>Nhập số kiểm kê Kho + nhóm + Mỏ, đối chiếu NCC và thiết lập mốc vận hành.</span></div><b>→</b></Link>
+      <Link href="/admin?tab=audit" className="admin-control-card"><div className="admin-control-icon"><FileSpreadsheet/></div><div><strong>Lịch sử Audit</strong><span>Xem ai sửa gì, dữ liệu trước/sau, thời gian GMT+7 và lý do chỉnh sửa.</span></div><b>→</b></Link>
+    </section>
+
+    <div className="admin-overview-grid">
+      <Card className="overview-panel"><div className="overview-panel-head"><div><CardTitle>Quản trị hệ thống</CardTitle><p>Cấu hình ít thay đổi, tách khỏi nghiệp vụ sửa dữ liệu.</p></div></div><div className="overview-quick-grid">
+        <Link href="/admin?tab=users" className="overview-quick"><span><UserRoundCog/></span><strong>User & phân quyền</strong><b>→</b></Link>
+        <Link href="/admin?tab=prices" className="overview-quick"><span><CircleDollarSign/></span><strong>Đơn giá</strong><b>→</b></Link>
+        <Link href="/admin?tab=thresholds" className="overview-quick"><span><AlertTriangle/></span><strong>Ngưỡng tồn</strong><b>→</b></Link>
+        <Link href="/admin?tab=calendar" className="overview-quick"><span><Settings/></span><strong>Lịch làm việc</strong><b>→</b></Link>
+        <Link href="/admin?tab=master" className="overview-quick"><span><Boxes/></span><strong>Danh mục & số dư</strong><b>→</b></Link>
+      </div><div className="admin-mini-status"><span>User hoạt động <strong>{users.active}/{users.total}</strong></span><span>Email lỗi/chờ <strong className={noticeTotal?"text-[#B91C1C]":"text-[#15803D]"}>{noticeTotal}</strong></span></div></Card>
+
+      <Card className="overview-panel"><div className="overview-panel-head"><div><CardTitle>Audit gần đây</CardTitle><p>Những thay đổi hệ thống mới nhất.</p></div><Link href="/admin?tab=audit" className="text-sm font-bold text-[var(--brand)]">Xem tất cả →</Link></div><div className="recent-list">{recentAudit.length?recentAudit.map((row:any)=><Link href="/admin?tab=audit" key={row.id} className="recent-row"><span className="recent-dot"/><div className="min-w-0"><strong>{row.actor_name || "Hệ thống"} · {row.action}</strong><span>{row.entity_type}{row.note?` · ${row.note}`:""}</span></div><b>→</b></Link>):<div className="attention-empty"><CheckCircle2/><div><strong>Chưa có Audit</strong><span>Chưa phát sinh thay đổi quản trị.</span></div></div>}</div></Card>
+    </div>
   </div>;
 }
 

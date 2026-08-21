@@ -469,3 +469,12 @@ Có cơ cấu chi phí, xu hướng, top loại khí, bảng tổng hợp theo l
 - Khi chốt: tạo bút toán `inventory_cutover`, đưa tồn về đúng số kiểm kê, xóa bucket đầu kỳ chưa phân loại còn sót, lưu audit, chuyển hệ thống sang `live`.
 - Không sửa/xóa lịch sử NCC hoặc chi phí trước mốc kiểm kê.
 - Sau go-live, các nghiệp vụ mới cập nhật tồn vật lý theo luồng chuẩn; không cho back-date Phiếu NCC trước go-live bằng luồng vận hành thường.
+
+
+## Admin - chỉnh dữ liệu có Audit (V1.0.39)
+- Admin là quyền hậu kiểm cao nhất và có thể sửa dữ liệu nghiệp vụ khi user nhập sai.
+- Phạm vi: Phiếu giao NCC, Phiếu trả vỏ NCC, Phiếu Đổi/Mượn/Trả nội bộ, Điều chuyển Nhà máy ↔ Mỏ.
+- Có thể chỉnh ngày, nơi/nhóm, loại khí, số lượng, ghi chú, thêm hoặc bỏ dòng.
+- Không cho sửa/xóa Audit, mã kỹ thuật hoặc người tạo gốc.
+- Bắt buộc lý do. Hệ thống lưu dữ liệu trước/sau, người sửa và thời gian.
+- Nếu nghiệp vụ đã ảnh hưởng tồn/chi phí, hệ thống ghi bút toán điều chỉnh chênh lệch và tính lại phần phụ thuộc.

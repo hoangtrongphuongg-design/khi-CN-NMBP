@@ -229,3 +229,101 @@ export async function listTransfers() {
     LIMIT 100
   `;
 }
+
+export type AdminTransferCorrectionLine = {
+  itemId?: string | null;
+  productId: string;
+  quantity: number;
+  sourceBucket?: "full" | "empty" | "managed";
+  delete?: boolean;
+};
+
+async function applyAdminTransferEffect(params: {
+  tx: any;
+  transferId: string;
+  direction: "plant_to_mine" | "mine_to_plant";
+  productId: string;
+  quantity: number;
+  sourceBucket: "full" | "empty" | "managed";
+  sign: 1 | -1;
+  actorUserId: string;
+  occurredDate: string;
+}) {
+  const { tx, transferId, direction, productId, quantity, sourceBucket, sign, actorUserId, occurredDate } = params;
+  if (!(quantity > 0)) return;
+  const wh = await getStockPointByCode("WH-PHC", tx);
+  const mine = await getMineStockPoint(tx);
+  const q = quantity * sign;
+  if (direction === "plant_to_mine") {
+    const bucket = sourceBucket === "empty" ? "empty" : "full";
+    await applyStockDelta({ tx,stockPointId:wh.id,productId,bucket,delta:-q,referenceType:"transfer_admin_revision_out",referenceId:transferId,actorUserId,occurredDate,note:"Admin điều chỉnh điều chuyển" });
+    await applyStockDelta({ tx,stockPointId:mine.id,productId,bucket:"managed",delta:q,referenceType:"transfer_admin_revision_in",referenceId:transferId,actorUserId,occurredDate,note:"Admin điều chỉnh điều chuyển" });
+  } else {
+    await applyStockDelta({ tx,stockPointId:mine.id,productId,bucket:"managed",delta:-q,referenceType:"transfer_admin_revision_out",referenceId:transferId,actorUserId,occurredDate,note:"Admin điều chỉnh điều chuyển" });
+    await applyStockDelta({ tx,stockPointId:wh.id,productId,bucket:"empty",delta:q,referenceType:"transfer_admin_revision_in",referenceId:transferId,actorUserId,occurredDate,note:"Admin điều chỉnh điều chuyển" });
+  }
+}
+
+export async function adminCorrectTransfer(profile: Profile, transferId: string, input: {
+  direction: "plant_to_mine" | "mine_to_plant";
+  transferDate: string;
+  note?: string | null;
+  reason: string;
+  lines: AdminTransferCorrectionLine[];
+}) {
+  if (profile.role !== "admin") throw new Error("Chỉ Admin được chỉnh dữ liệu nghiệp vụ đã ghi nhận");
+  const reason = String(input.reason || "").trim();
+  if (!reason) throw new Error("Bắt buộc nhập lý do chỉnh sửa để lưu Audit");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.transferDate)) throw new Error("Ngày điều chuyển không hợp lệ");
+  if (!["plant_to_mine","mine_to_plant"].includes(input.direction)) throw new Error("Chiều điều chuyển không hợp lệ");
+  const lines = input.lines.filter((line) => !line.delete).map((line) => ({
+    ...line,
+    productId: String(line.productId || ""),
+    quantity: Number(line.quantity || 0),
+    sourceBucket: input.direction === "plant_to_mine" ? (line.sourceBucket === "empty" ? "empty" : "full") as "full"|"empty" : "managed" as const,
+  }));
+  if (!lines.length) throw new Error("Phiếu điều chuyển phải còn ít nhất một dòng");
+  if (lines.some((line) => !line.productId || line.quantity <= 0)) throw new Error("Có dòng điều chuyển không hợp lệ");
+  const keys = lines.map((line) => `${line.productId}:${line.sourceBucket}`);
+  if (new Set(keys).size !== keys.length) throw new Error("Một loại khí và loại chai không được lặp trong cùng phiếu");
+
+  await sql.begin(async (tx) => {
+    const [tr] = await tx`SELECT * FROM transfers WHERE id=${transferId}::uuid FOR UPDATE`;
+    if (!tr) throw new Error("Không tìm thấy Phiếu điều chuyển");
+    const oldItems = await tx`
+      SELECT ti.id,ti.product_id,ti.quantity::float8 AS quantity,ti.received_qty::float8 AS received_qty,ti.source_bucket,p.name AS product_name
+      FROM transfer_items ti JOIN products p ON p.id=ti.product_id
+      WHERE ti.transfer_id=${transferId}::uuid ORDER BY p.display_order,p.name FOR UPDATE OF ti
+    `;
+    const before = { transfer:{ direction:tr.direction,transfer_date:toDateKey(tr.transfer_date),status:tr.status,note:tr.note },items:oldItems };
+    const effectsApplied = !["pending","cancelled"].includes(String(tr.status));
+    const oldDate = toDateKey(tr.transfer_date);
+    if (effectsApplied) {
+      for (const old of oldItems as any[]) {
+        await applyAdminTransferEffect({ tx,transferId,direction:tr.direction,productId:String(old.product_id),quantity:Number(old.quantity),sourceBucket:old.source_bucket,sign:-1,actorUserId:profile.id,occurredDate:oldDate });
+      }
+      for (const line of lines) {
+        await applyAdminTransferEffect({ tx,transferId,direction:input.direction,productId:line.productId,quantity:line.quantity,sourceBucket:line.sourceBucket,sign:1,actorUserId:profile.id,occurredDate:input.transferDate });
+      }
+    }
+    await tx`DELETE FROM transfer_items WHERE transfer_id=${transferId}::uuid`;
+    for (const line of lines) {
+      await tx`
+        INSERT INTO transfer_items(transfer_id,product_id,quantity,source_bucket,received_qty)
+        VALUES (${transferId}::uuid,${line.productId}::uuid,${line.quantity},${line.sourceBucket},${effectsApplied ? line.quantity : null})
+      `;
+    }
+    await tx`UPDATE transfers SET direction=${input.direction},transfer_date=${input.transferDate}::date,note=${input.note || null} WHERE id=${transferId}::uuid`;
+    const [adjustment] = await tx`
+      INSERT INTO adjustment_notes(adjustment_code,original_reference_type,original_reference_id,reason,created_by)
+      VALUES (('ADM-'||to_char(now() AT TIME ZONE 'Asia/Ho_Chi_Minh','YYYYMMDDHH24MISS')||'-'||upper(substr(md5(random()::text),1,5))),
+        'transfer',${transferId}::uuid,${reason},${profile.id}::uuid) RETURNING adjustment_code
+    `;
+    const afterItems = await tx`
+      SELECT ti.id,ti.product_id,ti.quantity::float8 AS quantity,ti.received_qty::float8 AS received_qty,ti.source_bucket,p.name AS product_name
+      FROM transfer_items ti JOIN products p ON p.id=ti.product_id WHERE ti.transfer_id=${transferId}::uuid ORDER BY p.display_order,p.name
+    `;
+    await audit({ tx,actorUserId:profile.id,action:"admin_correct",entityType:"transfer",entityId:transferId,before,
+      after:{ transfer:{ direction:input.direction,transfer_date:input.transferDate,status:tr.status,note:input.note || null },items:afterItems,adjustment_code:adjustment.adjustment_code },note:reason });
+  });
+}

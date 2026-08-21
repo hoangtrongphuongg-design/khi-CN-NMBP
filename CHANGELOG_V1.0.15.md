@@ -77,3 +77,13 @@
 - Danh sách Phiếu giao NCC ưu tiên trạng thái: Có phản hồi → Chờ xác nhận thực nhận → Chờ Trưởng kho → trạng thái đang xử lý khác → Hoàn tất; trong từng nhóm sắp mới nhất → cũ nhất.
 - Phiếu dang dở được nhấn trực quan, đặc biệt trên mobile, và chia rõ `Cần xử lý trước` / `Đã hoàn tất`.
 - Giữ nguyên design system và các giao diện đã khóa ngoài các thay đổi chức năng nêu trên.
+
+
+## V1.0.39 - Trung tâm Admin & chỉnh dữ liệu có Audit
+- Thiết kế lại Tổng quan Admin theo 3 vùng: Kiểm soát dữ liệu, Quản trị hệ thống, Audit gần đây.
+- Thêm tab `Chỉnh sửa dữ liệu`: tra cứu và chỉnh Giao NCC, Trả vỏ NCC, Đổi/Mượn/Trả nội bộ và Điều chuyển.
+- Admin có thể sửa ngày, địa điểm/nhóm, loại khí, số lượng và thêm/xóa dòng nghiệp vụ; mã kỹ thuật và người tạo gốc giữ nguyên.
+- Mỗi lần chỉnh bắt buộc nhập lý do; lưu `before_data` + `after_data` trong audit_logs và tạo adjustment note.
+- Với nghiệp vụ đã phát sinh tồn, hệ thống đảo ảnh hưởng cũ và áp dụng ảnh hưởng mới bằng bút toán revision, không xóa lịch sử.
+- Giao NCC điều chỉnh được tính lại đơn giá hàng hóa, tuyến/cước và vỏ thuê NCC.
+- Audit UI xem được dữ liệu trước/sau; SQL 16 khóa UPDATE/DELETE audit_logs ở DB.

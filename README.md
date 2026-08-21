@@ -76,3 +76,6 @@ Health endpoint: `/api/health`.
 
 ### Nâng cấp V1.0.38
 Chạy `15_KIEM_KE_CHOT_VAN_HANH.sql` trên Neon trước khi deploy code V1.0.38. SQL chỉ tạo cấu trúc chốt vận hành + điểm ledger lịch sử ẩn, không tự thay đổi số tồn hiện có.
+
+### Nâng cấp V1.0.39
+Chạy `16_KHOA_AUDIT_ADMIN_CHINH_DU_LIEU.sql` trên Neon sau SQL 15 và trước khi deploy V1.0.39. SQL 16 chỉ khóa `audit_logs` khỏi UPDATE/DELETE; không thay đổi dữ liệu nghiệp vụ hiện có. V1.0.39 bổ sung Trung tâm Admin và chức năng chỉnh dữ liệu nghiệp vụ có Audit.

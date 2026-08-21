@@ -977,3 +977,49 @@ button,a,input,select,textarea { font-weight:500; }
     overflow-wrap:anywhere;
   }
 }
+
+/* V1.0.39 - Admin control center */
+.admin-page-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+.admin-control-hero{border-color:#b7d3ee;background:linear-gradient(135deg,#fff 0%,#f4f9ff 100%)}
+.admin-control-rules{display:flex;align-items:center;gap:.65rem;flex-wrap:wrap;color:var(--brand-deep);font-size:.85rem;font-weight:700}
+.admin-control-rules span{padding:.45rem .7rem;border:1px solid #d5e4f3;border-radius:.7rem;background:#fff}
+.admin-control-rules b{color:#7b8da3}
+.admin-edit-card{border-color:#bfd7ef;box-shadow:0 14px 40px rgba(15,39,71,.08)}
+.admin-edit-lines{display:grid;gap:.6rem;padding:1rem;border:1px solid var(--border);border-radius:1rem;background:#fafcff}
+.admin-edit-lines-head{display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;padding-bottom:.35rem}
+.admin-edit-lines-head span{font-size:.8rem;color:var(--muted-foreground)}
+.admin-edit-line{align-items:center;border-top:1px solid #e7edf4;padding-top:.65rem}
+.admin-edit-line.is-new{border-style:dashed;opacity:.9}
+.admin-delete-check{display:flex;align-items:center;justify-content:center;gap:.35rem;min-height:42px;border:1px solid #f1c8c8;border-radius:.65rem;background:#fff7f7;color:#a61b1b;font-size:.8rem;font-weight:700}
+.admin-impact-warning{display:grid;gap:.2rem;border:1px solid #f1d39b;border-radius:.85rem;background:#fff9ed;padding:.8rem 1rem;color:#7a4c00;font-size:.88rem}
+.admin-impact-warning strong{color:#92400e}
+.audit-detail summary{cursor:pointer;color:var(--brand);font-weight:700;font-size:.8rem}
+.audit-json-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.5rem;margin-top:.5rem}
+.audit-json-grid>div{min-width:0;border:1px solid var(--border);border-radius:.6rem;background:#f8fafc;padding:.55rem}
+.audit-json-grid pre{max-height:240px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:.7rem;line-height:1.45;color:#334155}
+.admin-control-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1rem}
+.admin-control-card{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:.85rem;min-height:112px;padding:1rem 1.1rem;border:1px solid var(--border);border-radius:1rem;background:#fff;box-shadow:0 6px 22px rgba(15,39,71,.05);color:var(--brand-deep)}
+.admin-control-card:hover{border-color:#8bb8df;box-shadow:0 10px 28px rgba(15,39,71,.09)}
+.admin-control-card.is-primary{border-color:#8bb8df;background:linear-gradient(135deg,#f3f8fe,#fff)}
+.admin-control-card strong{display:block;font-size:1rem}
+.admin-control-card span{display:block;margin-top:.25rem;color:var(--muted-foreground);font-size:.8rem;line-height:1.45}
+.admin-control-icon{display:grid;place-items:center;width:44px;height:44px;border-radius:.8rem;background:#eaf4ff;color:var(--brand)}
+.admin-overview-grid{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,.8fr);gap:1rem}
+.admin-mini-status{display:flex;gap:1rem;flex-wrap:wrap;margin-top:1rem;padding-top:.85rem;border-top:1px solid var(--border);font-size:.8rem;color:var(--muted-foreground)}
+.admin-mini-status strong{margin-left:.25rem;color:var(--brand-deep)}
+.admin-mode-metric{display:grid;grid-template-columns:auto minmax(0,1fr);gap:.8rem;align-items:center;text-decoration:none}
+.admin-mode-value{font-size:1.6rem!important}
+.overview-metric-foot{margin-top:.2rem;color:var(--muted-foreground);font-size:.72rem;font-weight:600}
+
+@media (max-width:767px){
+  .admin-control-grid,.admin-overview-grid{grid-template-columns:1fr}
+  .admin-control-card{min-height:96px}
+  .admin-control-rules{display:grid;grid-template-columns:1fr;gap:.35rem}
+  .admin-control-rules b{display:none}
+  .audit-json-grid{grid-template-columns:1fr}
+  .admin-edit-lines{padding:.75rem}
+  .admin-edit-line{display:grid!important;grid-template-columns:1fr 1fr!important}
+  .admin-edit-line>*:first-child{grid-column:1/-1}
+  .admin-delete-check{justify-self:stretch}
+}
+.admin-overview a.overview-metric{border:1px solid var(--border);background:#fff;box-shadow:0 5px 18px rgba(15,39,71,.05);text-decoration:none}
