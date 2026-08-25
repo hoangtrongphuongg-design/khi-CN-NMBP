@@ -1,4 +1,29 @@
-# Quản lý khí NMBP — V1.0.42
+# Quản lý khí NMBP — V1.0.45
+
+
+### Rà soát V1.0.45 — gói triển khai tinh gọn
+
+- Giữ nguyên chức năng V1.0.44: lọc tồn vỏ thuê theo ngày và mở lịch sử giao/trả theo từng loại khí.
+- Đồng bộ KPI **Vỏ chai khí CN** ở đầu trang với đúng ngày lịch sử đang chọn; các KPI khác vẫn là số hiện tại.
+- Gói ZIP triển khai đã loại tài liệu lịch sử, SQL migration cũ, file build cache và ZIP lồng; không ảnh hưởng runtime.
+- Không thay đổi schema Neon và không cần chạy SQL migration.
+
+### Bổ sung V1.0.44 — lịch sử giao/trả theo từng loại vỏ
+
+- Giữ nguyên bộ lọc **SL vỏ thuê tính đến ngày** của V1.0.43 tại Tổng quan Workshop.
+- Bấm trực tiếp vào từng dòng O₂/CO₂/N₂/Ar/Ar-CO₂ để mở cửa sổ lịch sử của loại đó.
+- Modal chỉ lấy dữ liệu từ **01/01 của năm đang xem đến hết ngày đã chọn**; không lấy giao dịch ngày sau.
+- Hiển thị: tồn đầu năm, tổng NCC giao, tổng đã trả NCC, tồn đến ngày đang xem và bảng chi tiết Ngày / Giao-Trả / Địa điểm / Phiếu-Chuyến / SL / Biến động / Tồn lũy kế.
+- Dữ liệu lịch sử lấy theo chứng từ hiện hành và đối chiếu bút toán nợ vỏ; chỉnh sửa Admin đã được phản ánh theo ngày/số lượng/địa điểm sau cùng.
+- Không thay đổi schema và không cần chạy SQL migration.
+
+### Bổ sung V1.0.43 — xem tồn vỏ thuê theo ngày
+
+- Trang **Tổng quan của Workshop**: khối **Vỏ chai khí công nghiệp** có bộ chọn ngày và nút **Áp dụng**.
+- Mặc định vẫn hiển thị số vỏ NMBP đang giữ của NCC tính đến ngày hiện tại.
+- Khi chọn ngày lịch sử, chỉ các bút toán NCC có **ngày nghiệp vụ đến hết ngày được chọn** được tính; ngày sau đó không được tính.
+- Chỉ **khối Vỏ chai khí công nghiệp** đổi theo ngày đã chọn (tổng trong khối và chi tiết O₂/CO₂/N₂/Ar/Ar-CO₂); các KPI và khối khác trên Tổng quan vẫn giữ số hiện tại.
+- Không thay đổi schema và không cần chạy SQL migration.
 
 ### Sửa lỗi V1.0.42 — chuyến vận chuyển độc lập
 

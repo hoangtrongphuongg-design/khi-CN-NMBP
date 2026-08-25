@@ -128,6 +128,19 @@ export type RentalSnapshot = {
   groups: RentalSnapshotGroup[];
 };
 
+/**
+ * Chuẩn hóa ngày xem tồn vỏ. Chỉ cho phép ngày hợp lệ đến ngày hiện tại (giờ Việt Nam).
+ * Giá trị trống/sai/ngày tương lai tự quay về hôm nay để dashboard luôn có số liệu an toàn.
+ */
+export function normalizeRentalAsOfDate(value?: string | null) {
+  const today = toDateInput();
+  const raw = String(value ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return today;
+  const parsed = new Date(`${raw}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== raw) return today;
+  return raw > today ? today : raw;
+}
+
 const rentalGroupMeta: Record<RentalSnapshotGroupKey, { title: string; unitLabel: string }> = {
   industrial: { title: "Vỏ chai khí công nghiệp", unitLabel: "vỏ" },
   xl45: { title: "Bồn XL-45", unitLabel: "bồn" },
@@ -147,20 +160,19 @@ function rentalGroupKey(productCode: string): RentalSnapshotGroupKey {
  * Tách thành 4 nhóm khác đơn vị: chai khí CN, XL-45, LPG12, LPG45.
  * Không cộng các nhóm khác đơn vị vào một tổng chung.
  */
-export async function getRentalSnapshot(): Promise<RentalSnapshot> {
-  const today = toDateInput();
-  const yearStart = `${today.slice(0, 4)}-01-01`;
-  const endDateExclusive = addDays(today, 1);
+export async function getRentalSnapshot(asOfDate?: string | null): Promise<RentalSnapshot> {
+  const resolvedAsOfDate = normalizeRentalAsOfDate(asOfDate);
+  const endDateExclusive = addDays(resolvedAsOfDate, 1);
 
   const sourceRows = await sql<any[]>`
     SELECT
       p.code AS product_code,
       p.name AS product_name,
       p.display_order,
-      COALESCE(ob.qty,0)::float8 AS opening_qty,
+      COALESCE(opening.qty,0)::float8 AS opening_qty,
       COALESCE(SUM(CASE
         WHEN sl.reference_type IN ('supplier_delivery','supplier_delivery_mine') AND sl.delta>0 THEN sl.delta
-              WHEN sl.reference_type='supplier_delivery_revision' THEN sl.delta
+        WHEN sl.reference_type='supplier_delivery_revision' THEN sl.delta
         ELSE 0
       END),0)::float8 AS supplier_in,
       COALESCE(SUM(CASE
@@ -169,17 +181,25 @@ export async function getRentalSnapshot(): Promise<RentalSnapshot> {
         ELSE 0
       END),0)::float8 AS supplier_out
     FROM products p
-    LEFT JOIN supplier_container_opening_balances ob
-      ON ob.product_id=p.id
-     AND ob.opening_date=${yearStart}::date
+    LEFT JOIN LATERAL (
+      SELECT ob.opening_date,ob.qty
+      FROM supplier_container_opening_balances ob
+      WHERE ob.product_id=p.id
+        AND ob.opening_date<=${resolvedAsOfDate}::date
+      ORDER BY ob.opening_date DESC
+      LIMIT 1
+    ) opening ON true
     LEFT JOIN stock_ledger sl
       ON sl.product_id=p.id
-     AND sl.occurred_at >= (${yearStart}::date AT TIME ZONE 'Asia/Ho_Chi_Minh')
+     AND sl.occurred_at >= COALESCE(
+       (opening.opening_date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'),
+       '1900-01-01 00:00:00+07'::timestamptz
+     )
      AND sl.occurred_at < (${endDateExclusive}::date AT TIME ZONE 'Asia/Ho_Chi_Minh')
      AND sl.reference_type IN ('supplier_delivery','supplier_delivery_mine','supplier_delivery_revision','supplier_return','supplier_return_revision')
     WHERE p.active=true
       AND p.returnable_container=true
-    GROUP BY p.id,p.code,p.name,p.display_order,ob.qty
+    GROUP BY p.id,p.code,p.name,p.display_order,opening.qty
     ORDER BY p.display_order,p.name
   `;
 
@@ -215,9 +235,211 @@ export async function getRentalSnapshot(): Promise<RentalSnapshot> {
   }));
 
   return {
-    asOfDate: today,
+    asOfDate: resolvedAsOfDate,
     totalCurrent: groups.find((group) => group.key === "industrial")?.totalCurrent ?? 0,
     groups,
+  };
+}
+
+export type RentalHistoryRow = {
+  event_date: string;
+  event_type: "delivery" | "return";
+  activity_label: string;
+  location_name: string;
+  reference_code: string;
+  trip_code: string | null;
+  quantity: number;
+  net_change: number;
+  running_qty: number;
+};
+
+export type RentalHistory = {
+  product_code: string;
+  product_name: string;
+  yearStart: string;
+  asOfDate: string;
+  openingQty: number;
+  supplierIn: number;
+  supplierOut: number;
+  closingQty: number;
+  rows: RentalHistoryRow[];
+};
+
+/**
+ * Lịch sử giao/trả NCC của một loại vỏ trong năm đang xem.
+ * - Khoảng thời gian: 01/01 của năm đến hết ngày đang chọn.
+ * - Chỉ lấy chứng từ hiện hành đã tạo bút toán nợ vỏ; các chỉnh sửa Admin đã được phản ánh
+ *   vào số lượng/ngày/địa điểm cuối cùng của chứng từ, không phơi các bút toán kỹ thuật đảo/ghi lại.
+ * - Tồn đầu năm dùng cùng logic số dư NCC: số dư đầu kỳ gần nhất + giao/trả trước 01/01.
+ */
+export async function getRentalHistory(productCode: string, asOfDate?: string | null): Promise<RentalHistory | null> {
+  const resolvedAsOfDate = normalizeRentalAsOfDate(asOfDate);
+  const yearStart = `${resolvedAsOfDate.slice(0, 4)}-01-01`;
+  const endDateExclusive = addDays(resolvedAsOfDate, 1);
+  const code = String(productCode || "").trim();
+  if (!code) return null;
+
+  const [product] = await sql<any[]>`
+    SELECT id,code,name
+    FROM products
+    WHERE code=${code} AND active=true AND returnable_container=true
+    LIMIT 1
+  `;
+  if (!product || rentalGroupKey(String(product.code)) !== "industrial") return null;
+
+  const [openingRows, movementRows, closingRows] = await Promise.all([
+    sql<any[]>`
+      SELECT GREATEST(0,
+        COALESCE(opening.qty,0)
+        + COALESCE(SUM(CASE
+            WHEN sl.reference_type IN ('supplier_delivery','supplier_delivery_mine') AND sl.delta>0 THEN sl.delta
+            WHEN sl.reference_type='supplier_delivery_revision' THEN sl.delta
+            WHEN sl.reference_type='supplier_return' AND sl.delta<0 THEN sl.delta
+            WHEN sl.reference_type='supplier_return_revision' THEN sl.delta
+            ELSE 0
+          END),0)
+      )::float8 AS opening_qty
+      FROM (SELECT 1) base
+      LEFT JOIN LATERAL (
+        SELECT ob.opening_date,ob.qty
+        FROM supplier_container_opening_balances ob
+        WHERE ob.product_id=${product.id}::uuid
+          AND ob.opening_date<=${yearStart}::date
+        ORDER BY ob.opening_date DESC
+        LIMIT 1
+      ) opening ON true
+      LEFT JOIN stock_ledger sl
+        ON sl.product_id=${product.id}::uuid
+       AND sl.occurred_at >= COALESCE(
+         (opening.opening_date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'),
+         '1900-01-01 00:00:00+07'::timestamptz
+       )
+       AND sl.occurred_at < (${yearStart}::date AT TIME ZONE 'Asia/Ho_Chi_Minh')
+       AND sl.reference_type IN ('supplier_delivery','supplier_delivery_mine','supplier_delivery_revision','supplier_return','supplier_return_revision')
+      GROUP BY opening.qty
+    `,
+    sql<any[]>`
+      SELECT * FROM (
+        SELECT
+          d.delivery_date::text AS event_date,
+          'delivery'::text AS event_type,
+          'NCC giao'::text AS activity_label,
+          l.name AS location_name,
+          d.delivery_code AS reference_code,
+          t.trip_code,
+          COALESCE(di.confirmed_qty,0)::float8 AS quantity,
+          1::int AS event_order
+        FROM supplier_delivery_items di
+        JOIN supplier_deliveries d ON d.id=di.delivery_id
+        JOIN locations l ON l.id=di.destination_location_id
+        LEFT JOIN transport_trips t ON t.id=d.trip_id
+        WHERE di.product_id=${product.id}::uuid
+          AND d.status='completed'
+          AND d.delivery_date>=${yearStart}::date
+          AND d.delivery_date<${endDateExclusive}::date
+          AND COALESCE(di.confirmed_qty,0)>0
+          AND EXISTS (
+            SELECT 1 FROM stock_ledger sl
+            WHERE sl.product_id=${product.id}::uuid
+              AND sl.reference_id=d.id
+              AND sl.reference_type IN ('supplier_delivery','supplier_delivery_mine','supplier_delivery_revision')
+          )
+
+        UNION ALL
+
+        SELECT
+          r.return_date::text AS event_date,
+          'return'::text AS event_type,
+          'Trả NCC'::text AS activity_label,
+          l.name AS location_name,
+          r.return_code AS reference_code,
+          t.trip_code,
+          COALESCE(ri.confirmed_qty,ri.declared_qty,0)::float8 AS quantity,
+          2::int AS event_order
+        FROM supplier_return_items ri
+        JOIN supplier_returns r ON r.id=ri.supplier_return_id
+        JOIN locations l ON l.id=r.source_location_id
+        LEFT JOIN transport_trips t ON t.id=r.trip_id
+        WHERE ri.product_id=${product.id}::uuid
+          AND r.status<>'cancelled'
+          AND r.return_date>=${yearStart}::date
+          AND r.return_date<${endDateExclusive}::date
+          AND COALESCE(ri.confirmed_qty,ri.declared_qty,0)>0
+          AND EXISTS (
+            SELECT 1 FROM stock_ledger sl
+            WHERE sl.product_id=${product.id}::uuid
+              AND sl.reference_id=r.id
+              AND sl.reference_type IN ('supplier_return','supplier_return_revision')
+          )
+      ) x
+      ORDER BY event_date,event_order,reference_code,location_name
+    `,
+    sql<any[]>`
+      SELECT GREATEST(0,
+        COALESCE(opening.qty,0)
+        + COALESCE(SUM(CASE
+            WHEN sl.reference_type IN ('supplier_delivery','supplier_delivery_mine') AND sl.delta>0 THEN sl.delta
+            WHEN sl.reference_type='supplier_delivery_revision' THEN sl.delta
+            WHEN sl.reference_type='supplier_return' AND sl.delta<0 THEN sl.delta
+            WHEN sl.reference_type='supplier_return_revision' THEN sl.delta
+            ELSE 0
+          END),0)
+      )::float8 AS closing_qty
+      FROM (SELECT 1) base
+      LEFT JOIN LATERAL (
+        SELECT ob.opening_date,ob.qty
+        FROM supplier_container_opening_balances ob
+        WHERE ob.product_id=${product.id}::uuid
+          AND ob.opening_date<=${resolvedAsOfDate}::date
+        ORDER BY ob.opening_date DESC
+        LIMIT 1
+      ) opening ON true
+      LEFT JOIN stock_ledger sl
+        ON sl.product_id=${product.id}::uuid
+       AND sl.occurred_at >= COALESCE(
+         (opening.opening_date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'),
+         '1900-01-01 00:00:00+07'::timestamptz
+       )
+       AND sl.occurred_at < (${endDateExclusive}::date AT TIME ZONE 'Asia/Ho_Chi_Minh')
+       AND sl.reference_type IN ('supplier_delivery','supplier_delivery_mine','supplier_delivery_revision','supplier_return','supplier_return_revision')
+      GROUP BY opening.qty
+    `,
+  ]);
+
+  const openingQty = Number(openingRows[0]?.opening_qty || 0);
+  let running = openingQty;
+  let supplierIn = 0;
+  let supplierOut = 0;
+  const rows: RentalHistoryRow[] = (movementRows as any[]).map((row) => {
+    const quantity = Number(row.quantity || 0);
+    const eventType = String(row.event_type) === "return" ? "return" : "delivery";
+    const netChange = eventType === "delivery" ? quantity : -quantity;
+    if (eventType === "delivery") supplierIn += quantity;
+    else supplierOut += quantity;
+    running = Math.max(0, running + netChange);
+    return {
+      event_date: String(row.event_date).slice(0, 10),
+      event_type: eventType,
+      activity_label: String(row.activity_label),
+      location_name: String(row.location_name),
+      reference_code: String(row.reference_code),
+      trip_code: row.trip_code ? String(row.trip_code) : null,
+      quantity,
+      net_change: netChange,
+      running_qty: running,
+    };
+  });
+
+  return {
+    product_code: String(product.code),
+    product_name: String(product.name),
+    yearStart,
+    asOfDate: resolvedAsOfDate,
+    openingQty,
+    supplierIn,
+    supplierOut,
+    closingQty: Number(closingRows[0]?.closing_qty || 0),
+    rows,
   };
 }
 

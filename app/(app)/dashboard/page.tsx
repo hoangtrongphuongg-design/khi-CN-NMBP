@@ -16,12 +16,13 @@ import {
   Settings,
   Truck,
   UserRoundCog,
+  X,
 } from "lucide-react";
 import { Card, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { requireProfile } from "@/lib/auth/session";
 import { canCreateGroupRequest } from "@/lib/auth/permissions";
-import { getCostSnapshot, getDashboardData, getGroupUsageSnapshot, getRentalSnapshot } from "@/lib/services/dashboard";
+import { getCostSnapshot, getDashboardData, getGroupUsageSnapshot, getRentalHistory, getRentalSnapshot, normalizeRentalAsOfDate } from "@/lib/services/dashboard";
 import { getAdminControlSummary } from "@/lib/services/admin";
 import { getGroupQuickData, listInternalRequests } from "@/lib/services/internal";
 import { listDeliveries } from "@/lib/services/deliveries";
@@ -31,15 +32,15 @@ import { formatCurrency, formatNumber, toDateInput, toDateKey } from "@/lib/util
 import { sql } from "@/lib/db";
 import type { Profile } from "@/types/app";
 
-export default async function DashboardPage() {
-  const profile = await requireProfile();
+export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ rental_date?: string; rental_product?: string }> }) {
+  const [profile, params] = await Promise.all([requireProfile(), searchParams]);
 
   if (profile.role === "admin") return <AdminHome/>;
   if (profile.role === "supplier") return <SupplierHome profile={profile}/>;
   if (["foreman","supervisor","worker"].includes(profile.role)) return <GroupHome profile={profile}/>;
   if (profile.role === "storekeeper") return <StorekeeperHome profile={profile}/>;
   if (profile.role === "warehouse_manager") return <WarehouseManagerHome profile={profile}/>;
-  if (profile.role === "workshop") return <WorkshopHome profile={profile}/>;
+  if (profile.role === "workshop") return <WorkshopHome profile={profile} rentalDate={params.rental_date} rentalProduct={params.rental_product}/>;
   if (profile.role === "mine_xsc") return <MineHome profile={profile}/>;
   if (profile.role === "management_board") return <ManagementHome profile={profile}/>;
 
@@ -47,14 +48,24 @@ export default async function DashboardPage() {
   return <div className="grid gap-5"><PageHeading title="Tổng quan" subtitle="Thông tin cần chú ý trong hệ thống."/><MetricGrid><Metric icon={<ClipboardCheck/>} label="Việc cần xử lý" value={data.pendingCount}/><Metric icon={<AlertTriangle/>} label="Cảnh báo" value={data.lowStock.length} tone="warning"/></MetricGrid></div>;
 }
 
-async function WorkshopHome({ profile }: { profile: Profile }) {
-  const [data, deliveriesRaw, requestsRaw, transfersRaw, rental, costs] = await Promise.all([
-    getDashboardData(profile), listDeliveries(profile), listInternalRequests(profile), listTransfers(), getRentalSnapshot(), getCostSnapshot(profile),
+async function WorkshopHome({ profile, rentalDate, rentalProduct }: { profile: Profile; rentalDate?: string; rentalProduct?: string }) {
+  const today = toDateInput();
+  const rentalAsOfDate = normalizeRentalAsOfDate(rentalDate);
+  const currentRentalPromise = getRentalSnapshot();
+  const selectedRentalPromise = rentalAsOfDate === today ? currentRentalPromise : getRentalSnapshot(rentalAsOfDate);
+  const rentalHistoryPromise = rentalProduct ? getRentalHistory(rentalProduct, rentalAsOfDate) : Promise.resolve(null);
+  const [data, deliveriesRaw, requestsRaw, transfersRaw, currentRental, costs, selectedRental, rentalHistory] = await Promise.all([
+    getDashboardData(profile), listDeliveries(profile), listInternalRequests(profile), listTransfers(), currentRentalPromise, getCostSnapshot(profile), selectedRentalPromise, rentalHistoryPromise,
   ]);
+  const selectedIndustrial = selectedRental.groups.find((group) => group.key === "industrial");
+  const rentalPanel = rentalAsOfDate === today ? currentRental : {
+    ...currentRental,
+    totalCurrent: selectedIndustrial?.totalCurrent ?? selectedRental.totalCurrent,
+    groups: currentRental.groups.map((group) => group.key === "industrial" ? (selectedIndustrial ?? group) : group),
+  };
   const deliveries = deliveriesRaw as any[];
   const requests = requestsRaw as any[];
   const transfers = transfersRaw as any[];
-  const today = toDateInput();
   const todayDeliveries = deliveries.filter((d) => toDateKey(d.delivery_date) === today).length;
   const borrowPending = requests.filter((r) => r.request_type === "borrow" && r.status === "pending").length;
   const reviewPending = requests.filter((r) => r.status === "executed_pending_review").length;
@@ -66,14 +77,14 @@ async function WorkshopHome({ profile }: { profile: Profile }) {
   return <div className="overview-page">
     <PageHeading title="Tổng quan" subtitle="Nhìn nhanh tình trạng hệ thống và các việc cần xử lý."/>
     <MetricGrid>
-      <Metric icon={<Boxes/>} label="Vỏ chai khí CN" value={rental.totalCurrent} suffix="vỏ"/>
+      <Metric icon={<Boxes/>} label="Vỏ chai khí CN" value={rentalPanel.totalCurrent} suffix="vỏ"/>
       <Metric icon={<Truck/>} label="Giao nhận hôm nay" value={todayDeliveries} suffix="chuyến"/>
       <Metric icon={<ClipboardCheck/>} label="Phiếu cần xử lý" value={actionTotal} suffix="phiếu"/>
       <Metric icon={<AlertTriangle/>} label="Cảnh báo" value={alerts} tone={alerts ? "warning" : "success"}/>
     </MetricGrid>
     <CostSummary costs={costs}/>
     <div className="overview-main-grid">
-      <RentalPanel rental={rental}/>
+      <RentalPanel rental={rentalPanel} industrialDateFilter={{ asOfDate: rentalAsOfDate, maxDate: today }}/>
       <AttentionPanel items={[
         task(borrowPending, "Phiếu Mượn chờ duyệt", "/internal?type=borrow&status=pending", "Duyệt mượn trong giờ hành chính", "warning"),
         task(reviewPending, "Phiếu nội bộ chờ duyệt", "/internal?status=executed_pending_review", "Hậu kiểm số lượng thực tế", "warning"),
@@ -87,6 +98,7 @@ async function WorkshopHome({ profile }: { profile: Profile }) {
       { href: "/reports", label: "Xem báo cáo", icon: <FileSpreadsheet/> },
     ]}/>
     <RecentActivity deliveries={deliveries} requests={requests} transfers={transfers}/>
+    {rentalHistory ? <RentalHistoryModal history={rentalHistory}/> : null}
   </div>;
 }
 
@@ -468,25 +480,82 @@ function CostSummary({ costs }: { costs: Awaited<ReturnType<typeof getCostSnapsh
   </section>;
 }
 
-function RentalPanel({ rental, compact = false }: { rental: Awaited<ReturnType<typeof getRentalSnapshot>>; compact?: boolean }) {
+type RentalDateFilter = { asOfDate: string; maxDate: string };
+
+function RentalPanel({ rental, compact = false, industrialDateFilter }: { rental: Awaited<ReturnType<typeof getRentalSnapshot>>; compact?: boolean; industrialDateFilter?: RentalDateFilter }) {
   return <section className={`rental-group-stack${compact ? " is-compact" : ""}`} aria-label="Vỏ và bồn đang giữ của NCC">
     {rental.groups.map((group) => {
       const max = Math.max(...group.rows.map((r) => r.current_qty), 1);
+      const dateFilter = group.key === "industrial" ? industrialDateFilter : undefined;
       return <Card className="overview-panel rental-panel" key={group.key}>
         <div className="overview-panel-head">
-          <div><CardTitle>{group.title}</CardTitle><p>Số lượng NMBP đang giữ của NCC</p></div>
+          <div><CardTitle>{group.title}</CardTitle><p>{dateFilter ? `Số lượng NMBP đang giữ của NCC · Tính đến ${dateLabel(dateFilter.asOfDate)}` : "Số lượng NMBP đang giữ của NCC"}</p></div>
           <div className="rental-total"><strong>{formatNumber(group.totalCurrent)}</strong><span>{group.unitLabel}</span></div>
         </div>
+        {dateFilter ? <form method="get" action="/dashboard" className="rental-date-filter">
+          <label className="rental-date-field"><span>SL vỏ thuê tính đến ngày</span><input type="date" name="rental_date" defaultValue={dateFilter.asOfDate} max={dateFilter.maxDate}/></label>
+          <button type="submit">Áp dụng</button>
+        </form> : null}
         <div className="rental-bars">
-          {group.rows.length ? group.rows.map((row) => <div key={row.product_code} className="rental-row">
-            <div className="rental-name"><strong>{row.product_name}</strong><span>{row.product_code}</span></div>
-            <div className="rental-track"><i style={{ width: `${Math.max((row.current_qty / max) * 100, row.current_qty > 0 ? 5 : 0)}%` }}/></div>
-            <div className="rental-qty">{formatNumber(row.current_qty)}</div>
-          </div>) : <div className="rental-empty">Chưa có danh mục sản phẩm trong nhóm này.</div>}
+          {group.rows.length ? group.rows.map((row) => {
+            const content = <>
+              <div className="rental-name"><strong>{row.product_name}</strong><span>{row.product_code}</span></div>
+              <div className="rental-track"><i style={{ width: `${Math.max((row.current_qty / max) * 100, row.current_qty > 0 ? 5 : 0)}%` }}/></div>
+              <div className="rental-qty">{formatNumber(row.current_qty)}</div>
+            </>;
+            return dateFilter ? <Link
+              key={row.product_code}
+              className="rental-row rental-row-link"
+              href={`/dashboard?rental_date=${encodeURIComponent(dateFilter.asOfDate)}&rental_product=${encodeURIComponent(row.product_code)}`}
+              title={`Xem lịch sử giao/trả ${row.product_name} đến ${dateLabel(dateFilter.asOfDate)}`}
+            >{content}</Link> : <div key={row.product_code} className="rental-row">{content}</div>;
+          }) : <div className="rental-empty">Chưa có danh mục sản phẩm trong nhóm này.</div>}
         </div>
       </Card>;
     })}
   </section>;
+}
+
+function RentalHistoryModal({ history }: { history: Awaited<ReturnType<typeof getRentalHistory>> }) {
+  if (!history) return null;
+  const closeHref = `/dashboard?rental_date=${encodeURIComponent(history.asOfDate)}`;
+  return <div className="rental-history-modal" role="presentation">
+    <Link href={closeHref} className="rental-history-backdrop" aria-label="Đóng lịch sử giao trả"/>
+    <section className="rental-history-dialog" role="dialog" aria-modal="true" aria-labelledby="rental-history-title">
+      <div className="rental-history-head">
+        <div>
+          <span className="rental-history-eyebrow">Lịch sử giao nhận · trả vỏ NCC</span>
+          <h2 id="rental-history-title">{history.product_name}</h2>
+          <p>{dateLabel(history.yearStart)} → {dateLabel(history.asOfDate)} · chỉ tính đến ngày đang xem trên Tổng quan</p>
+        </div>
+        <Link href={closeHref} className="rental-history-close" aria-label="Đóng"><X/></Link>
+      </div>
+
+      <div className="rental-history-summary">
+        <div><span>Tồn đầu năm</span><strong>{formatNumber(history.openingQty)}</strong><small>vỏ</small></div>
+        <div><span>NCC đã giao</span><strong>{formatNumber(history.supplierIn)}</strong><small>vỏ</small></div>
+        <div><span>Đã trả NCC</span><strong>{formatNumber(history.supplierOut)}</strong><small>vỏ</small></div>
+        <div className="is-current"><span>Tồn đến {dateLabel(history.asOfDate)}</span><strong>{formatNumber(history.closingQty)}</strong><small>vỏ</small></div>
+      </div>
+
+      <div className="rental-history-table-wrap">
+        <table className="rental-history-table">
+          <thead><tr><th>Ngày</th><th>Hoạt động</th><th>Địa điểm</th><th>Phiếu / chuyến</th><th>SL</th><th>Biến động</th><th>Tồn sau GD</th></tr></thead>
+          <tbody>{history.rows.map((row, index) => <tr key={`${row.event_date}-${row.reference_code}-${row.event_type}-${index}`}>
+            <td>{dateLabel(row.event_date)}</td>
+            <td><span className={`rental-history-type is-${row.event_type}`}>{row.activity_label}</span></td>
+            <td>{row.location_name}</td>
+            <td><strong>{row.reference_code}</strong>{row.trip_code ? <small>{row.trip_code}</small> : null}</td>
+            <td className="num">{formatNumber(row.quantity)}</td>
+            <td className={`num delta is-${row.event_type}`}>{row.net_change > 0 ? "+" : "−"}{formatNumber(Math.abs(row.net_change))}</td>
+            <td className="num"><strong>{formatNumber(row.running_qty)}</strong></td>
+          </tr>)}</tbody>
+        </table>
+        {!history.rows.length ? <div className="rental-history-empty">Không có giao/trả {history.product_name} trong khoảng thời gian này.</div> : null}
+      </div>
+      <div className="rental-history-note">Nếu có nhiều chứng từ cùng ngày, tồn lũy kế trong bảng được sắp theo Giao trước, Trả sau vì dữ liệu nghiệp vụ hiện lưu theo ngày.</div>
+    </section>
+  </div>;
 }
 
 type AttentionItem = { count: number; title: string; href: string; subtitle: string; tone: "info" | "warning" | "danger" };
