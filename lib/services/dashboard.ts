@@ -105,32 +105,35 @@ export async function getCostSnapshot(profile: Profile): Promise<CostSnapshot> {
 export type RentalSnapshotRow = {
   product_code: string;
   product_name: string;
+  unit: string;
+  returnable_container: boolean;
   opening_qty: number;
   supplier_in: number;
   supplier_out: number;
   current_qty: number;
 };
 
-export type RentalSnapshotGroupKey = "industrial" | "xl45" | "lpg12" | "lpg45";
+export type RentalSnapshotGroupKey = "industrial" | "xl45" | "lpg12" | "lpg45" | "goods";
 
 export type RentalSnapshotGroup = {
   key: RentalSnapshotGroupKey;
   title: string;
   unitLabel: string;
+  mode: "container" | "received";
   totalCurrent: number;
   rows: RentalSnapshotRow[];
 };
 
 export type RentalSnapshot = {
   asOfDate: string;
-  /** Giữ tương thích KPI cũ: tổng vỏ chai khí công nghiệp, không cộng XL-45/LPG khác đơn vị. */
+  /** Giữ tương thích KPI cũ: tổng vỏ chai khí công nghiệp, không cộng XL-45/LPG/hàng kg. */
   totalCurrent: number;
   groups: RentalSnapshotGroup[];
 };
 
 /**
- * Chuẩn hóa ngày xem tồn vỏ. Chỉ cho phép ngày hợp lệ đến ngày hiện tại (giờ Việt Nam).
- * Giá trị trống/sai/ngày tương lai tự quay về hôm nay để dashboard luôn có số liệu an toàn.
+ * Chuẩn hóa ngày xem số liệu sản phẩm. Chỉ cho phép ngày hợp lệ đến ngày hiện tại (giờ Việt Nam).
+ * Giá trị trống/sai/ngày tương lai tự quay về hôm nay.
  */
 export function normalizeRentalAsOfDate(value?: string | null) {
   const today = toDateInput();
@@ -141,39 +144,48 @@ export function normalizeRentalAsOfDate(value?: string | null) {
   return raw > today ? today : raw;
 }
 
-const rentalGroupMeta: Record<RentalSnapshotGroupKey, { title: string; unitLabel: string }> = {
-  industrial: { title: "Vỏ chai khí công nghiệp", unitLabel: "vỏ" },
-  xl45: { title: "Bồn XL-45", unitLabel: "bồn" },
-  lpg12: { title: "Bình Gas 12 kg", unitLabel: "bình" },
-  lpg45: { title: "Bình Gas 45 kg", unitLabel: "bình" },
+const rentalGroupMeta: Record<RentalSnapshotGroupKey, { title: string; unitLabel: string; mode: "container" | "received" }> = {
+  industrial: { title: "Vỏ chai khí công nghiệp", unitLabel: "vỏ", mode: "container" },
+  xl45: { title: "Bồn XL-45", unitLabel: "bồn", mode: "container" },
+  lpg12: { title: "Bình Gas 12 kg", unitLabel: "bình", mode: "container" },
+  lpg45: { title: "Bình Gas 45 kg", unitLabel: "bình", mode: "container" },
+  goods: { title: "Sản phẩm theo khối lượng", unitLabel: "kg", mode: "received" },
 };
 
-function rentalGroupKey(productCode: string): RentalSnapshotGroupKey {
+function rentalGroupKey(productCode: string, returnableContainer = true): RentalSnapshotGroupKey {
+  if (!returnableContainer) return "goods";
   if (["LOX-XL45", "LIN-XL45"].includes(productCode)) return "xl45";
   if (productCode === "LPG12") return "lpg12";
   if (productCode === "LPG45") return "lpg45";
   return "industrial";
 }
 
+function historyUnitLabel(productCode: string, productUnit: string, returnableContainer: boolean) {
+  if (!returnableContainer) return productUnit || "đơn vị";
+  const groupKey = rentalGroupKey(productCode, true);
+  return rentalGroupMeta[groupKey].unitLabel;
+}
+
 /**
- * Số vật chứa hiện còn của NCC = số dư đầu kỳ + số thực nhận đã xác nhận - số thực trả NCC.
- * Trưởng kho hậu kiểm không làm chậm thời điểm ghi nhận nợ vỏ.
- * Tách thành 4 nhóm khác đơn vị: chai khí CN, XL-45, LPG12, LPG45.
+ * Tổng quan sản phẩm NCC đến một ngày:
+ * - Sản phẩm có vật chứa hoàn trả: số đang giữ = số dư đầu kỳ + thực nhận đã xác nhận - thực trả NCC.
+ * - Sản phẩm không có vật chứa hoàn trả (Đá khô/CO2 lỏng): hiển thị lũy kế số thực nhận trong năm đến ngày xem.
+ * Trưởng kho hậu kiểm không làm chậm thời điểm ghi nhận số thực tế.
  */
 export async function getRentalSnapshot(asOfDate?: string | null): Promise<RentalSnapshot> {
   const resolvedAsOfDate = normalizeRentalAsOfDate(asOfDate);
+  const yearStart = `${resolvedAsOfDate.slice(0, 4)}-01-01`;
 
-  // Nợ vỏ NCC phải theo chứng từ nghiệp vụ thực tế, không phụ thuộc thời điểm
-  // Trưởng kho hậu kiểm. Một dòng giao được tính ngay khi bên nhận đã xác nhận
-  // số thực nhận; Phiếu trả được trừ ngay khi dòng trả đã được ghi nhận thực tế.
   const sourceRows = await sql<any[]>`
     SELECT
       p.code AS product_code,
       p.name AS product_name,
+      p.unit,
+      p.returnable_container,
       p.display_order,
-      COALESCE(opening.qty,0)::float8 AS opening_qty,
+      CASE WHEN p.returnable_container THEN COALESCE(opening.qty,0) ELSE 0 END::float8 AS opening_qty,
       COALESCE(delivery_mv.qty,0)::float8 AS supplier_in,
-      COALESCE(return_mv.qty,0)::float8 AS supplier_out
+      CASE WHEN p.returnable_container THEN COALESCE(return_mv.qty,0) ELSE 0 END::float8 AS supplier_out
     FROM products p
     LEFT JOIN LATERAL (
       SELECT ob.opening_date,ob.qty
@@ -189,9 +201,13 @@ export async function getRentalSnapshot(asOfDate?: string | null): Promise<Renta
       JOIN supplier_deliveries d ON d.id=di.delivery_id
       WHERE di.product_id=p.id
         AND d.status<>'cancelled'
-        AND d.delivery_date>=COALESCE(opening.opening_date,DATE '1900-01-01')
+        AND d.delivery_date>=CASE
+          WHEN p.returnable_container THEN COALESCE(opening.opening_date,DATE '1900-01-01')
+          ELSE ${yearStart}::date
+        END
         AND d.delivery_date<=${resolvedAsOfDate}::date
         AND di.confirmed_qty IS NOT NULL
+        AND di.confirmed_qty>0
         AND (
           di.status IN ('xsc_confirmed','confirmed')
           OR (di.status='feedback' AND di.confirmed_by IS NOT NULL)
@@ -201,7 +217,8 @@ export async function getRentalSnapshot(asOfDate?: string | null): Promise<Renta
       SELECT COALESCE(SUM(COALESCE(ri.confirmed_qty,ri.declared_qty)),0)::numeric AS qty
       FROM supplier_return_items ri
       JOIN supplier_returns r ON r.id=ri.supplier_return_id
-      WHERE ri.product_id=p.id
+      WHERE p.returnable_container=true
+        AND ri.product_id=p.id
         AND r.status<>'cancelled'
         AND r.return_date>=COALESCE(opening.opening_date,DATE '1900-01-01')
         AND r.return_date<=${resolvedAsOfDate}::date
@@ -209,7 +226,6 @@ export async function getRentalSnapshot(asOfDate?: string | null): Promise<Renta
         AND COALESCE(ri.confirmed_qty,ri.declared_qty,0)>0
     ) return_mv ON true
     WHERE p.active=true
-      AND p.returnable_container=true
     ORDER BY p.display_order,p.name
   `;
 
@@ -218,29 +234,34 @@ export async function getRentalSnapshot(asOfDate?: string | null): Promise<Renta
     xl45: [],
     lpg12: [],
     lpg45: [],
+    goods: [],
   };
 
   for (const row of sourceRows) {
+    const returnableContainer = Boolean(row.returnable_container);
     const opening = Number(row.opening_qty || 0);
     const supplierIn = Number(row.supplier_in || 0);
     const supplierOut = Number(row.supplier_out || 0);
     const item: RentalSnapshotRow = {
       product_code: String(row.product_code),
       product_name: String(row.product_name),
+      unit: String(row.unit || ""),
+      returnable_container: returnableContainer,
       opening_qty: opening,
       supplier_in: supplierIn,
       supplier_out: supplierOut,
-      // Không ép về 0: số âm là dấu hiệu dữ liệu cần đối soát và phải được nhìn thấy.
-      current_qty: opening + supplierIn - supplierOut,
+      // Không ép về 0. Với hàng không hoàn trả, đây là lũy kế thực nhận trong năm.
+      current_qty: returnableContainer ? opening + supplierIn - supplierOut : supplierIn,
     };
-    buckets[rentalGroupKey(item.product_code)].push(item);
+    buckets[rentalGroupKey(item.product_code, returnableContainer)].push(item);
   }
 
-  const groupOrder: RentalSnapshotGroupKey[] = ["industrial", "xl45", "lpg12", "lpg45"];
+  const groupOrder: RentalSnapshotGroupKey[] = ["industrial", "xl45", "lpg12", "lpg45", "goods"];
   const groups = groupOrder.map((key): RentalSnapshotGroup => ({
     key,
     title: rentalGroupMeta[key].title,
     unitLabel: rentalGroupMeta[key].unitLabel,
+    mode: rentalGroupMeta[key].mode,
     rows: buckets[key],
     totalCurrent: buckets[key].reduce((sum, item) => sum + item.current_qty, 0),
   }));
@@ -267,21 +288,25 @@ export type RentalHistoryRow = {
 export type RentalHistory = {
   product_code: string;
   product_name: string;
+  unitLabel: string;
+  returnableContainer: boolean;
   yearStart: string;
   asOfDate: string;
   openingQty: number;
   supplierIn: number;
   supplierOut: number;
   closingQty: number;
+  deliveryCount: number;
+  returnCount: number;
   rows: RentalHistoryRow[];
 };
 
 /**
- * Lịch sử giao/trả NCC của một loại vỏ trong năm đang xem.
+ * Lịch sử NCC của bất kỳ sản phẩm nào trong năm đang xem.
  * - Khoảng thời gian: 01/01 của năm đến hết ngày đang chọn.
- * - Giao: lấy số thực nhận của từng dòng ngay khi bên nhận đã xác nhận, kể cả đang chờ Trưởng kho.
- * - Trả: lấy số thực trả của chứng từ hiện hành; phản hồi sau khi đã giao/trả vẫn giữ số thực tế hiện hành.
- * - Tồn đầu năm dùng cùng nguồn chứng từ, nên đầu + giao - trả luôn đối chiếu được với tồn cuối.
+ * - Sản phẩm có vật chứa: Giao + / Trả -, có tồn đầu năm và tồn lũy kế.
+ * - Sản phẩm không có vật chứa hoàn trả: chỉ thống kê các lần giao và lũy kế lượng đã giao trong năm.
+ * - Giao được tính ngay khi bên nhận xác nhận confirmed_qty, kể cả Phiếu cha đang chờ Trưởng kho.
  */
 export async function getRentalHistory(productCode: string, asOfDate?: string | null): Promise<RentalHistory | null> {
   const resolvedAsOfDate = normalizeRentalAsOfDate(asOfDate);
@@ -291,118 +316,130 @@ export async function getRentalHistory(productCode: string, asOfDate?: string | 
   if (!code) return null;
 
   const [product] = await sql<any[]>`
-    SELECT id,code,name
+    SELECT id,code,name,unit,returnable_container
     FROM products
-    WHERE code=${code} AND active=true AND returnable_container=true
+    WHERE code=${code} AND active=true
     LIMIT 1
   `;
-  if (!product || rentalGroupKey(String(product.code)) !== "industrial") return null;
+  if (!product) return null;
 
-  const [openingRows, movementRows] = await Promise.all([
-    sql<any[]>`
-      SELECT (
-        COALESCE(opening.qty,0)
-        + COALESCE(delivery_mv.qty,0)
-        - COALESCE(return_mv.qty,0)
-      )::float8 AS opening_qty
-      FROM (SELECT 1) base
-      LEFT JOIN LATERAL (
-        SELECT ob.opening_date,ob.qty
-        FROM supplier_container_opening_balances ob
-        WHERE ob.product_id=${product.id}::uuid
-          AND ob.opening_date<=${yearStart}::date
-        ORDER BY ob.opening_date DESC
-        LIMIT 1
-      ) opening ON true
-      LEFT JOIN LATERAL (
-        SELECT COALESCE(SUM(di.confirmed_qty),0)::numeric AS qty
-        FROM supplier_delivery_items di
-        JOIN supplier_deliveries d ON d.id=di.delivery_id
-        WHERE di.product_id=${product.id}::uuid
-          AND d.status<>'cancelled'
-          AND d.delivery_date>=COALESCE(opening.opening_date,DATE '1900-01-01')
-          AND d.delivery_date<${yearStart}::date
-          AND di.confirmed_qty IS NOT NULL
-          AND (
-            di.status IN ('xsc_confirmed','confirmed')
-            OR (di.status='feedback' AND di.confirmed_by IS NOT NULL)
-          )
-      ) delivery_mv ON true
-      LEFT JOIN LATERAL (
-        SELECT COALESCE(SUM(COALESCE(ri.confirmed_qty,ri.declared_qty)),0)::numeric AS qty
-        FROM supplier_return_items ri
-        JOIN supplier_returns r ON r.id=ri.supplier_return_id
-        WHERE ri.product_id=${product.id}::uuid
-          AND r.status<>'cancelled'
-          AND r.return_date>=COALESCE(opening.opening_date,DATE '1900-01-01')
-          AND r.return_date<${yearStart}::date
-          AND ri.status IN ('confirmed','feedback')
-          AND COALESCE(ri.confirmed_qty,ri.declared_qty,0)>0
-      ) return_mv ON true
-    `,
-    sql<any[]>`
-      SELECT * FROM (
-        SELECT
-          d.delivery_date::text AS event_date,
-          'delivery'::text AS event_type,
-          'NCC giao'::text AS activity_label,
-          l.name AS location_name,
-          d.delivery_code AS reference_code,
-          t.trip_code,
-          di.confirmed_qty::float8 AS quantity,
-          1::int AS event_order
-        FROM supplier_delivery_items di
-        JOIN supplier_deliveries d ON d.id=di.delivery_id
-        JOIN locations l ON l.id=di.destination_location_id
-        LEFT JOIN transport_trips t ON t.id=d.trip_id
-        WHERE di.product_id=${product.id}::uuid
-          AND d.status<>'cancelled'
-          AND d.delivery_date>=${yearStart}::date
-          AND d.delivery_date<${endDateExclusive}::date
-          AND di.confirmed_qty IS NOT NULL
-          AND di.confirmed_qty>0
-          AND (
-            di.status IN ('xsc_confirmed','confirmed')
-            OR (di.status='feedback' AND di.confirmed_by IS NOT NULL)
-          )
+  const returnableContainer = Boolean(product.returnable_container);
+  const openingPromise = returnableContainer
+    ? sql<any[]>`
+        SELECT (
+          COALESCE(opening.qty,0)
+          + COALESCE(delivery_mv.qty,0)
+          - COALESCE(return_mv.qty,0)
+        )::float8 AS opening_qty
+        FROM (SELECT 1) base
+        LEFT JOIN LATERAL (
+          SELECT ob.opening_date,ob.qty
+          FROM supplier_container_opening_balances ob
+          WHERE ob.product_id=${product.id}::uuid
+            AND ob.opening_date<=${yearStart}::date
+          ORDER BY ob.opening_date DESC
+          LIMIT 1
+        ) opening ON true
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(SUM(di.confirmed_qty),0)::numeric AS qty
+          FROM supplier_delivery_items di
+          JOIN supplier_deliveries d ON d.id=di.delivery_id
+          WHERE di.product_id=${product.id}::uuid
+            AND d.status<>'cancelled'
+            AND d.delivery_date>=COALESCE(opening.opening_date,DATE '1900-01-01')
+            AND d.delivery_date<${yearStart}::date
+            AND di.confirmed_qty IS NOT NULL
+            AND di.confirmed_qty>0
+            AND (
+              di.status IN ('xsc_confirmed','confirmed')
+              OR (di.status='feedback' AND di.confirmed_by IS NOT NULL)
+            )
+        ) delivery_mv ON true
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(SUM(COALESCE(ri.confirmed_qty,ri.declared_qty)),0)::numeric AS qty
+          FROM supplier_return_items ri
+          JOIN supplier_returns r ON r.id=ri.supplier_return_id
+          WHERE ri.product_id=${product.id}::uuid
+            AND r.status<>'cancelled'
+            AND r.return_date>=COALESCE(opening.opening_date,DATE '1900-01-01')
+            AND r.return_date<${yearStart}::date
+            AND ri.status IN ('confirmed','feedback')
+            AND COALESCE(ri.confirmed_qty,ri.declared_qty,0)>0
+        ) return_mv ON true
+      `
+    : Promise.resolve([{ opening_qty: 0 }]);
 
-        UNION ALL
+  const movementPromise = sql<any[]>`
+    SELECT * FROM (
+      SELECT
+        d.delivery_date::text AS event_date,
+        'delivery'::text AS event_type,
+        'NCC giao'::text AS activity_label,
+        l.name AS location_name,
+        d.delivery_code AS reference_code,
+        t.trip_code,
+        di.confirmed_qty::float8 AS quantity,
+        1::int AS event_order
+      FROM supplier_delivery_items di
+      JOIN supplier_deliveries d ON d.id=di.delivery_id
+      JOIN locations l ON l.id=di.destination_location_id
+      LEFT JOIN transport_trips t ON t.id=d.trip_id
+      WHERE di.product_id=${product.id}::uuid
+        AND d.status<>'cancelled'
+        AND d.delivery_date>=${yearStart}::date
+        AND d.delivery_date<${endDateExclusive}::date
+        AND di.confirmed_qty IS NOT NULL
+        AND di.confirmed_qty>0
+        AND (
+          di.status IN ('xsc_confirmed','confirmed')
+          OR (di.status='feedback' AND di.confirmed_by IS NOT NULL)
+        )
 
-        SELECT
-          r.return_date::text AS event_date,
-          'return'::text AS event_type,
-          'Trả NCC'::text AS activity_label,
-          l.name AS location_name,
-          r.return_code AS reference_code,
-          t.trip_code,
-          COALESCE(ri.confirmed_qty,ri.declared_qty,0)::float8 AS quantity,
-          2::int AS event_order
-        FROM supplier_return_items ri
-        JOIN supplier_returns r ON r.id=ri.supplier_return_id
-        JOIN locations l ON l.id=r.source_location_id
-        LEFT JOIN transport_trips t ON t.id=r.trip_id
-        WHERE ri.product_id=${product.id}::uuid
-          AND r.status<>'cancelled'
-          AND r.return_date>=${yearStart}::date
-          AND r.return_date<${endDateExclusive}::date
-          AND ri.status IN ('confirmed','feedback')
-          AND COALESCE(ri.confirmed_qty,ri.declared_qty,0)>0
-      ) x
-      ORDER BY event_date,event_order,reference_code,location_name
-    `,
-  ]);
+      UNION ALL
 
+      SELECT
+        r.return_date::text AS event_date,
+        'return'::text AS event_type,
+        'Trả NCC'::text AS activity_label,
+        l.name AS location_name,
+        r.return_code AS reference_code,
+        t.trip_code,
+        COALESCE(ri.confirmed_qty,ri.declared_qty,0)::float8 AS quantity,
+        2::int AS event_order
+      FROM supplier_return_items ri
+      JOIN supplier_returns r ON r.id=ri.supplier_return_id
+      JOIN locations l ON l.id=r.source_location_id
+      LEFT JOIN transport_trips t ON t.id=r.trip_id
+      WHERE ${returnableContainer}
+        AND ri.product_id=${product.id}::uuid
+        AND r.status<>'cancelled'
+        AND r.return_date>=${yearStart}::date
+        AND r.return_date<${endDateExclusive}::date
+        AND ri.status IN ('confirmed','feedback')
+        AND COALESCE(ri.confirmed_qty,ri.declared_qty,0)>0
+    ) x
+    ORDER BY event_date,event_order,reference_code,location_name
+  `;
+
+  const [openingRows, movementRows] = await Promise.all([openingPromise, movementPromise]);
   const openingQty = Number(openingRows[0]?.opening_qty || 0);
   let running = openingQty;
   let supplierIn = 0;
   let supplierOut = 0;
+  let deliveryCount = 0;
+  let returnCount = 0;
+
   const rows: RentalHistoryRow[] = (movementRows as any[]).map((row) => {
     const quantity = Number(row.quantity || 0);
     const eventType = String(row.event_type) === "return" ? "return" : "delivery";
     const netChange = eventType === "delivery" ? quantity : -quantity;
-    if (eventType === "delivery") supplierIn += quantity;
-    else supplierOut += quantity;
-    // Không ép về 0. Nếu âm, đây là sai lệch nghiệp vụ cần đối soát.
+    if (eventType === "delivery") {
+      supplierIn += quantity;
+      deliveryCount += 1;
+    } else {
+      supplierOut += quantity;
+      returnCount += 1;
+    }
     running += netChange;
     return {
       event_date: String(row.event_date).slice(0, 10),
@@ -420,13 +457,16 @@ export async function getRentalHistory(productCode: string, asOfDate?: string | 
   return {
     product_code: String(product.code),
     product_name: String(product.name),
+    unitLabel: historyUnitLabel(String(product.code), String(product.unit || ""), returnableContainer),
+    returnableContainer,
     yearStart,
     asOfDate: resolvedAsOfDate,
     openingQty,
     supplierIn,
     supplierOut,
-    // Cùng một nguồn với bảng chi tiết, nên luôn đối chiếu được: đầu + giao - trả = cuối.
     closingQty: running,
+    deliveryCount,
+    returnCount,
     rows,
   };
 }

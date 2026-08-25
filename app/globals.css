@@ -598,6 +598,7 @@ button,a,input,select,textarea { font-weight:500; }
 .rental-date-field input:focus{outline:2px solid rgba(0,84,166,.16);outline-offset:1px;border-color:#8cb9e5}
 .rental-date-filter button{min-height:38px;border:0;border-radius:10px;background:var(--brand);padding:0 14px;color:#fff;font-size:.73rem;font-weight:700;cursor:pointer}
 .rental-date-filter button:hover{filter:brightness(.96)}
+.rental-date-note{flex-basis:100%;grid-column:1/-1;color:var(--muted-foreground);font-size:.61rem;line-height:1.4}
 .rental-bars{display:grid;gap:11px;margin-top:17px}
 .rental-row{display:grid;grid-template-columns:minmax(110px,160px) 1fr 44px;align-items:center;gap:10px}
 .rental-name{min-width:0}
@@ -623,6 +624,7 @@ button,a,input,select,textarea { font-weight:500; }
 .rental-history-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;padding:16px 22px 4px}
 .rental-history-summary>div{position:relative;min-height:86px;padding:13px 14px;border:1px solid #dfe8f1;border-radius:15px;background:#f9fbfd}
 .rental-history-summary>div.is-current{border-color:#a9cdec;background:#f3f9ff}
+.rental-history-summary-goods{grid-template-columns:repeat(2,minmax(0,1fr))}
 .rental-history-summary span{display:block;color:var(--muted-foreground);font-size:.68rem;font-weight:600}
 .rental-history-summary strong{display:inline-block;margin-top:6px;color:var(--brand-deep);font-size:1.45rem;line-height:1;font-variant-numeric:tabular-nums}
 .rental-history-summary small{margin-left:5px;color:var(--muted-foreground);font-size:.66rem;font-weight:600}

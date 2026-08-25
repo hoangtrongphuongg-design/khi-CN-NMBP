@@ -1,5 +1,14 @@
-# Quản lý khí NMBP — V1.0.46
+# Quản lý khí NMBP — V1.0.47
 
+
+
+### Bổ sung V1.0.47 — lịch sử cho toàn bộ sản phẩm
+
+- Bộ chọn ngày trên Tổng quan Workshop áp dụng cho toàn bộ nhóm sản phẩm trong khối NCC; các KPI khác vẫn theo ngày hiện tại.
+- Có thể bấm xem lịch sử cho O₂/CO₂/N₂/Ar/Ar-CO₂, XL-45, LPG và cả Đá khô CO₂/CO₂ lỏng.
+- Sản phẩm có vật chứa hoàn trả hiển thị giao/trả và tồn lũy kế.
+- Sản phẩm theo kg không có vật chứa hoàn trả chỉ hiển thị lịch sử NCC giao và lũy kế lượng giao trong năm, không gán khái niệm trả/tồn vỏ.
+- Không thay đổi schema Neon; không cần SQL migration.
 
 
 ### Sửa lỗi V1.0.46 — đồng bộ toàn bộ cộng/trừ vỏ NCC

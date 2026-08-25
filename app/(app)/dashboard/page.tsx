@@ -57,12 +57,9 @@ async function WorkshopHome({ profile, rentalDate, rentalProduct }: { profile: P
   const [data, deliveriesRaw, requestsRaw, transfersRaw, currentRental, costs, selectedRental, rentalHistory] = await Promise.all([
     getDashboardData(profile), listDeliveries(profile), listInternalRequests(profile), listTransfers(), currentRentalPromise, getCostSnapshot(profile), selectedRentalPromise, rentalHistoryPromise,
   ]);
-  const selectedIndustrial = selectedRental.groups.find((group) => group.key === "industrial");
-  const rentalPanel = rentalAsOfDate === today ? currentRental : {
-    ...currentRental,
-    totalCurrent: selectedIndustrial?.totalCurrent ?? selectedRental.totalCurrent,
-    groups: currentRental.groups.map((group) => group.key === "industrial" ? (selectedIndustrial ?? group) : group),
-  };
+  // Ngày đang xem áp dụng thống nhất cho toàn bộ nhóm sản phẩm trong khối NCC.
+  // Các KPI khác trên Tổng quan vẫn giữ theo ngày hiện tại.
+  const rentalPanel = rentalAsOfDate === today ? currentRental : selectedRental;
   const deliveries = deliveriesRaw as any[];
   const requests = requestsRaw as any[];
   const transfers = transfersRaw as any[];
@@ -84,7 +81,7 @@ async function WorkshopHome({ profile, rentalDate, rentalProduct }: { profile: P
     </MetricGrid>
     <CostSummary costs={costs}/>
     <div className="overview-main-grid">
-      <RentalPanel rental={rentalPanel} industrialDateFilter={{ asOfDate: rentalAsOfDate, maxDate: today }}/>
+      <RentalPanel rental={rentalPanel} dateFilter={{ asOfDate: rentalAsOfDate, maxDate: today }}/>
       <AttentionPanel items={[
         task(borrowPending, "Phiếu Mượn chờ duyệt", "/internal?type=borrow&status=pending", "Duyệt mượn trong giờ hành chính", "warning"),
         task(reviewPending, "Phiếu nội bộ chờ duyệt", "/internal?status=executed_pending_review", "Hậu kiểm số lượng thực tế", "warning"),
@@ -482,19 +479,23 @@ function CostSummary({ costs }: { costs: Awaited<ReturnType<typeof getCostSnapsh
 
 type RentalDateFilter = { asOfDate: string; maxDate: string };
 
-function RentalPanel({ rental, compact = false, industrialDateFilter }: { rental: Awaited<ReturnType<typeof getRentalSnapshot>>; compact?: boolean; industrialDateFilter?: RentalDateFilter }) {
-  return <section className={`rental-group-stack${compact ? " is-compact" : ""}`} aria-label="Vỏ và bồn đang giữ của NCC">
+function RentalPanel({ rental, compact = false, dateFilter }: { rental: Awaited<ReturnType<typeof getRentalSnapshot>>; compact?: boolean; dateFilter?: RentalDateFilter }) {
+  return <section className={`rental-group-stack${compact ? " is-compact" : ""}`} aria-label="Sản phẩm giao nhận với NCC">
     {rental.groups.map((group) => {
       const max = Math.max(...group.rows.map((r) => r.current_qty), 1);
-      const dateFilter = group.key === "industrial" ? industrialDateFilter : undefined;
+      const subtitle = group.mode === "received"
+        ? `Lũy kế NCC đã giao trong năm${dateFilter ? ` · Tính đến ${dateLabel(dateFilter.asOfDate)}` : ""}`
+        : `Số lượng NMBP đang giữ của NCC${dateFilter ? ` · Tính đến ${dateLabel(dateFilter.asOfDate)}` : ""}`;
+      const showDateFilter = group.key === "industrial" && dateFilter;
       return <Card className="overview-panel rental-panel" key={group.key}>
         <div className="overview-panel-head">
-          <div><CardTitle>{group.title}</CardTitle><p>{dateFilter ? `Số lượng NMBP đang giữ của NCC · Tính đến ${dateLabel(dateFilter.asOfDate)}` : "Số lượng NMBP đang giữ của NCC"}</p></div>
+          <div><CardTitle>{group.title}</CardTitle><p>{subtitle}</p></div>
           <div className="rental-total"><strong>{formatNumber(group.totalCurrent)}</strong><span>{group.unitLabel}</span></div>
         </div>
-        {dateFilter ? <form method="get" action="/dashboard" className="rental-date-filter">
-          <label className="rental-date-field"><span>SL vỏ thuê tính đến ngày</span><input type="date" name="rental_date" defaultValue={dateFilter.asOfDate} max={dateFilter.maxDate}/></label>
+        {showDateFilter ? <form method="get" action="/dashboard" className="rental-date-filter">
+          <label className="rental-date-field"><span>Số liệu sản phẩm tính đến ngày</span><input type="date" name="rental_date" defaultValue={showDateFilter.asOfDate} max={showDateFilter.maxDate}/></label>
           <button type="submit">Áp dụng</button>
+          <small className="rental-date-note">Ngày đã chọn áp dụng cho toàn bộ sản phẩm bên dưới; các KPI khác của Tổng quan không thay đổi.</small>
         </form> : null}
         <div className="rental-bars">
           {group.rows.length ? group.rows.map((row) => {
@@ -507,7 +508,9 @@ function RentalPanel({ rental, compact = false, industrialDateFilter }: { rental
               key={row.product_code}
               className="rental-row rental-row-link"
               href={`/dashboard?rental_date=${encodeURIComponent(dateFilter.asOfDate)}&rental_product=${encodeURIComponent(row.product_code)}`}
-              title={`Xem lịch sử giao/trả ${row.product_name} đến ${dateLabel(dateFilter.asOfDate)}`}
+              title={row.returnable_container
+                ? `Xem lịch sử giao/trả ${row.product_name} đến ${dateLabel(dateFilter.asOfDate)}`
+                : `Xem lịch sử giao nhận ${row.product_name} đến ${dateLabel(dateFilter.asOfDate)}`}
             >{content}</Link> : <div key={row.product_code} className="rental-row">{content}</div>;
           }) : <div className="rental-empty">Chưa có danh mục sản phẩm trong nhóm này.</div>}
         </div>
@@ -519,44 +522,61 @@ function RentalPanel({ rental, compact = false, industrialDateFilter }: { rental
 function RentalHistoryModal({ history }: { history: Awaited<ReturnType<typeof getRentalHistory>> }) {
   if (!history) return null;
   const closeHref = `/dashboard?rental_date=${encodeURIComponent(history.asOfDate)}`;
-  const hasNegativeBalance = history.openingQty < 0 || history.rows.some((row) => row.running_qty < 0);
+  const hasNegativeBalance = history.returnableContainer && (history.openingQty < 0 || history.rows.some((row) => row.running_qty < 0));
   return <div className="rental-history-modal" role="presentation">
-    <Link href={closeHref} className="rental-history-backdrop" aria-label="Đóng lịch sử giao trả"/>
+    <Link href={closeHref} className="rental-history-backdrop" aria-label="Đóng lịch sử giao nhận"/>
     <section className="rental-history-dialog" role="dialog" aria-modal="true" aria-labelledby="rental-history-title">
       <div className="rental-history-head">
         <div>
-          <span className="rental-history-eyebrow">Lịch sử giao nhận · trả vỏ NCC</span>
+          <span className="rental-history-eyebrow">{history.returnableContainer ? "Lịch sử giao nhận · trả NCC" : "Lịch sử giao nhận NCC"}</span>
           <h2 id="rental-history-title">{history.product_name}</h2>
           <p>{dateLabel(history.yearStart)} → {dateLabel(history.asOfDate)} · chỉ tính đến ngày đang xem trên Tổng quan</p>
         </div>
         <Link href={closeHref} className="rental-history-close" aria-label="Đóng"><X/></Link>
       </div>
 
-      <div className="rental-history-summary">
-        <div><span>Tồn đầu năm</span><strong>{formatNumber(history.openingQty)}</strong><small>vỏ</small></div>
-        <div><span>NCC đã giao</span><strong>{formatNumber(history.supplierIn)}</strong><small>vỏ</small></div>
-        <div><span>Đã trả NCC</span><strong>{formatNumber(history.supplierOut)}</strong><small>vỏ</small></div>
-        <div className="is-current"><span>Tồn đến {dateLabel(history.asOfDate)}</span><strong>{formatNumber(history.closingQty)}</strong><small>vỏ</small></div>
-      </div>
+      {history.returnableContainer ? <div className="rental-history-summary">
+        <div><span>Tồn đầu năm</span><strong>{formatNumber(history.openingQty)}</strong><small>{history.unitLabel}</small></div>
+        <div><span>NCC đã giao</span><strong>{formatNumber(history.supplierIn)}</strong><small>{history.unitLabel}</small></div>
+        <div><span>Đã trả NCC</span><strong>{formatNumber(history.supplierOut)}</strong><small>{history.unitLabel}</small></div>
+        <div className="is-current"><span>Tồn đến {dateLabel(history.asOfDate)}</span><strong>{formatNumber(history.closingQty)}</strong><small>{history.unitLabel}</small></div>
+      </div> : <div className="rental-history-summary rental-history-summary-goods">
+        <div><span>NCC đã giao trong kỳ</span><strong>{formatNumber(history.supplierIn)}</strong><small>{history.unitLabel}</small></div>
+        <div className="is-current"><span>Số lần giao đã xác nhận</span><strong>{formatNumber(history.deliveryCount)}</strong><small>lần</small></div>
+      </div>}
 
       <div className="rental-history-table-wrap">
         <table className="rental-history-table">
-          <thead><tr><th>Ngày</th><th>Hoạt động</th><th>Địa điểm</th><th>Phiếu / chuyến</th><th>SL</th><th>Biến động</th><th>Tồn sau GD</th></tr></thead>
-          <tbody>{history.rows.map((row, index) => <tr key={`${row.event_date}-${row.reference_code}-${row.event_type}-${index}`}>
-            <td>{dateLabel(row.event_date)}</td>
-            <td><span className={`rental-history-type is-${row.event_type}`}>{row.activity_label}</span></td>
-            <td>{row.location_name}</td>
-            <td><strong>{row.reference_code}</strong>{row.trip_code ? <small>{row.trip_code}</small> : null}</td>
-            <td className="num">{formatNumber(row.quantity)}</td>
-            <td className={`num delta is-${row.event_type}`}>{row.net_change > 0 ? "+" : "−"}{formatNumber(Math.abs(row.net_change))}</td>
-            <td className="num"><strong>{formatNumber(row.running_qty)}</strong></td>
-          </tr>)}</tbody>
+          {history.returnableContainer ? <>
+            <thead><tr><th>Ngày</th><th>Hoạt động</th><th>Địa điểm</th><th>Phiếu / chuyến</th><th>SL</th><th>Biến động</th><th>Tồn sau GD</th></tr></thead>
+            <tbody>{history.rows.map((row, index) => <tr key={`${row.event_date}-${row.reference_code}-${row.event_type}-${index}`}>
+              <td>{dateLabel(row.event_date)}</td>
+              <td><span className={`rental-history-type is-${row.event_type}`}>{row.activity_label}</span></td>
+              <td>{row.location_name}</td>
+              <td><strong>{row.reference_code}</strong>{row.trip_code ? <small>{row.trip_code}</small> : null}</td>
+              <td className="num">{formatNumber(row.quantity)}</td>
+              <td className={`num delta is-${row.event_type}`}>{row.net_change > 0 ? "+" : "−"}{formatNumber(Math.abs(row.net_change))}</td>
+              <td className="num"><strong>{formatNumber(row.running_qty)}</strong></td>
+            </tr>)}</tbody>
+          </> : <>
+            <thead><tr><th>Ngày</th><th>Hoạt động</th><th>Địa điểm</th><th>Phiếu / chuyến</th><th>SL ({history.unitLabel})</th><th>Lũy kế giao ({history.unitLabel})</th></tr></thead>
+            <tbody>{history.rows.map((row, index) => <tr key={`${row.event_date}-${row.reference_code}-${index}`}>
+              <td>{dateLabel(row.event_date)}</td>
+              <td><span className="rental-history-type is-delivery">{row.activity_label}</span></td>
+              <td>{row.location_name}</td>
+              <td><strong>{row.reference_code}</strong>{row.trip_code ? <small>{row.trip_code}</small> : null}</td>
+              <td className="num">{formatNumber(row.quantity)}</td>
+              <td className="num"><strong>{formatNumber(row.running_qty)}</strong></td>
+            </tr>)}</tbody>
+          </>}
         </table>
-        {!history.rows.length ? <div className="rental-history-empty">Không có giao/trả {history.product_name} trong khoảng thời gian này.</div> : null}
+        {!history.rows.length ? <div className="rental-history-empty">Không có giao dịch {history.product_name} trong khoảng thời gian này.</div> : null}
       </div>
-      <div className="rental-history-note">{hasNegativeBalance
-        ? "Cảnh báo đối soát: có thời điểm tồn vỏ âm. Hệ thống giữ nguyên số âm để lộ sai lệch dữ liệu, không tự ép về 0."
-        : "Dòng giao được cộng ngay khi bên nhận đã xác nhận số thực nhận; không chờ Trưởng kho hậu kiểm. Nếu cùng ngày có nhiều chứng từ, bảng sắp Giao trước, Trả sau."}</div>
+      <div className="rental-history-note">{history.returnableContainer
+        ? (hasNegativeBalance
+          ? "Cảnh báo đối soát: có thời điểm tồn vật chứa âm. Hệ thống giữ nguyên số âm để lộ sai lệch dữ liệu, không tự ép về 0."
+          : "Dòng giao được cộng ngay khi bên nhận đã xác nhận số thực nhận; không chờ Trưởng kho hậu kiểm. Nếu cùng ngày có nhiều chứng từ, bảng sắp Giao trước, Trả sau.")
+        : "Sản phẩm này không quản lý vật chứa hoàn trả. Bảng chỉ thống kê số lượng NCC giao đã được bên nhận xác nhận và lũy kế trong năm; không hiển thị nghiệp vụ trả vỏ."}</div>
     </section>
   </div>;
 }
