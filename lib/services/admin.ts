@@ -383,9 +383,20 @@ async function supplierContainerSnapshotAt(dateKey: string, cutoverId?: string |
       GROUP BY product_id
     )
     SELECT p.id AS product_id,p.code AS product_code,p.name AS product_name,p.unit,p.display_order,
-      GREATEST(0,COALESCE(opening.qty,0)+COALESCE(mv.net_delta,0))::float8 AS supplier_qty,
+      (
+        COALESCE(opening.qty,0)
+        + COALESCE(delivery_mv.qty,0)
+        - COALESCE(return_mv.qty,0)
+      )::float8 AS supplier_qty,
       COALESCE(c.counted_qty,0)::float8 AS counted_qty,
-      (COALESCE(c.counted_qty,0)-GREATEST(0,COALESCE(opening.qty,0)+COALESCE(mv.net_delta,0)))::float8 AS difference
+      (
+        COALESCE(c.counted_qty,0)
+        - (
+          COALESCE(opening.qty,0)
+          + COALESCE(delivery_mv.qty,0)
+          - COALESCE(return_mv.qty,0)
+        )
+      )::float8 AS difference
     FROM products p
     LEFT JOIN LATERAL (
       SELECT ob.opening_date,ob.qty
@@ -394,19 +405,30 @@ async function supplierContainerSnapshotAt(dateKey: string, cutoverId?: string |
       ORDER BY ob.opening_date DESC LIMIT 1
     ) opening ON true
     LEFT JOIN LATERAL (
-      SELECT COALESCE(SUM(CASE
-        WHEN sl.reference_type IN ('supplier_delivery','supplier_delivery_mine') AND sl.delta>0 THEN sl.delta
-              WHEN sl.reference_type='supplier_delivery_revision' THEN sl.delta
-        WHEN sl.reference_type='supplier_return' AND sl.delta<0 THEN sl.delta
-        WHEN sl.reference_type='supplier_return_revision' THEN sl.delta
-        ELSE 0 END),0)::numeric AS net_delta
-      FROM stock_ledger sl
-      WHERE sl.product_id=p.id
-        AND sl.occurred_at >= COALESCE(
-          (opening.opening_date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'),
-          '1900-01-01 00:00:00+07'::timestamptz)
-        AND sl.occurred_at < ((${dateKey}::date + interval '1 day') AT TIME ZONE 'Asia/Ho_Chi_Minh')
-    ) mv ON true
+      SELECT COALESCE(SUM(di.confirmed_qty),0)::numeric AS qty
+      FROM supplier_delivery_items di
+      JOIN supplier_deliveries d ON d.id=di.delivery_id
+      WHERE di.product_id=p.id
+        AND d.status<>'cancelled'
+        AND d.delivery_date>=COALESCE(opening.opening_date,DATE '1900-01-01')
+        AND d.delivery_date<=${dateKey}::date
+        AND di.confirmed_qty IS NOT NULL
+        AND (
+          di.status IN ('xsc_confirmed','confirmed')
+          OR (di.status='feedback' AND di.confirmed_by IS NOT NULL)
+        )
+    ) delivery_mv ON true
+    LEFT JOIN LATERAL (
+      SELECT COALESCE(SUM(COALESCE(ri.confirmed_qty,ri.declared_qty)),0)::numeric AS qty
+      FROM supplier_return_items ri
+      JOIN supplier_returns r ON r.id=ri.supplier_return_id
+      WHERE ri.product_id=p.id
+        AND r.status<>'cancelled'
+        AND r.return_date>=COALESCE(opening.opening_date,DATE '1900-01-01')
+        AND r.return_date<=${dateKey}::date
+        AND ri.status IN ('confirmed','feedback')
+        AND COALESCE(ri.confirmed_qty,ri.declared_qty,0)>0
+    ) return_mv ON true
     LEFT JOIN counted c ON c.product_id=p.id
     WHERE p.active AND p.returnable_container
     ORDER BY p.display_order,p.name

@@ -156,30 +156,24 @@ function rentalGroupKey(productCode: string): RentalSnapshotGroupKey {
 }
 
 /**
- * Số vật chứa hiện còn của NCC = số dư đầu kỳ + NCC giao đã hoàn tất - trả NCC.
+ * Số vật chứa hiện còn của NCC = số dư đầu kỳ + số thực nhận đã xác nhận - số thực trả NCC.
+ * Trưởng kho hậu kiểm không làm chậm thời điểm ghi nhận nợ vỏ.
  * Tách thành 4 nhóm khác đơn vị: chai khí CN, XL-45, LPG12, LPG45.
- * Không cộng các nhóm khác đơn vị vào một tổng chung.
  */
 export async function getRentalSnapshot(asOfDate?: string | null): Promise<RentalSnapshot> {
   const resolvedAsOfDate = normalizeRentalAsOfDate(asOfDate);
-  const endDateExclusive = addDays(resolvedAsOfDate, 1);
 
+  // Nợ vỏ NCC phải theo chứng từ nghiệp vụ thực tế, không phụ thuộc thời điểm
+  // Trưởng kho hậu kiểm. Một dòng giao được tính ngay khi bên nhận đã xác nhận
+  // số thực nhận; Phiếu trả được trừ ngay khi dòng trả đã được ghi nhận thực tế.
   const sourceRows = await sql<any[]>`
     SELECT
       p.code AS product_code,
       p.name AS product_name,
       p.display_order,
       COALESCE(opening.qty,0)::float8 AS opening_qty,
-      COALESCE(SUM(CASE
-        WHEN sl.reference_type IN ('supplier_delivery','supplier_delivery_mine') AND sl.delta>0 THEN sl.delta
-        WHEN sl.reference_type='supplier_delivery_revision' THEN sl.delta
-        ELSE 0
-      END),0)::float8 AS supplier_in,
-      COALESCE(SUM(CASE
-        WHEN sl.reference_type='supplier_return' AND sl.delta<0 THEN -sl.delta
-        WHEN sl.reference_type='supplier_return_revision' THEN -sl.delta
-        ELSE 0
-      END),0)::float8 AS supplier_out
+      COALESCE(delivery_mv.qty,0)::float8 AS supplier_in,
+      COALESCE(return_mv.qty,0)::float8 AS supplier_out
     FROM products p
     LEFT JOIN LATERAL (
       SELECT ob.opening_date,ob.qty
@@ -189,17 +183,33 @@ export async function getRentalSnapshot(asOfDate?: string | null): Promise<Renta
       ORDER BY ob.opening_date DESC
       LIMIT 1
     ) opening ON true
-    LEFT JOIN stock_ledger sl
-      ON sl.product_id=p.id
-     AND sl.occurred_at >= COALESCE(
-       (opening.opening_date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'),
-       '1900-01-01 00:00:00+07'::timestamptz
-     )
-     AND sl.occurred_at < (${endDateExclusive}::date AT TIME ZONE 'Asia/Ho_Chi_Minh')
-     AND sl.reference_type IN ('supplier_delivery','supplier_delivery_mine','supplier_delivery_revision','supplier_return','supplier_return_revision')
+    LEFT JOIN LATERAL (
+      SELECT COALESCE(SUM(di.confirmed_qty),0)::numeric AS qty
+      FROM supplier_delivery_items di
+      JOIN supplier_deliveries d ON d.id=di.delivery_id
+      WHERE di.product_id=p.id
+        AND d.status<>'cancelled'
+        AND d.delivery_date>=COALESCE(opening.opening_date,DATE '1900-01-01')
+        AND d.delivery_date<=${resolvedAsOfDate}::date
+        AND di.confirmed_qty IS NOT NULL
+        AND (
+          di.status IN ('xsc_confirmed','confirmed')
+          OR (di.status='feedback' AND di.confirmed_by IS NOT NULL)
+        )
+    ) delivery_mv ON true
+    LEFT JOIN LATERAL (
+      SELECT COALESCE(SUM(COALESCE(ri.confirmed_qty,ri.declared_qty)),0)::numeric AS qty
+      FROM supplier_return_items ri
+      JOIN supplier_returns r ON r.id=ri.supplier_return_id
+      WHERE ri.product_id=p.id
+        AND r.status<>'cancelled'
+        AND r.return_date>=COALESCE(opening.opening_date,DATE '1900-01-01')
+        AND r.return_date<=${resolvedAsOfDate}::date
+        AND ri.status IN ('confirmed','feedback')
+        AND COALESCE(ri.confirmed_qty,ri.declared_qty,0)>0
+    ) return_mv ON true
     WHERE p.active=true
       AND p.returnable_container=true
-    GROUP BY p.id,p.code,p.name,p.display_order,opening.qty
     ORDER BY p.display_order,p.name
   `;
 
@@ -220,7 +230,8 @@ export async function getRentalSnapshot(asOfDate?: string | null): Promise<Renta
       opening_qty: opening,
       supplier_in: supplierIn,
       supplier_out: supplierOut,
-      current_qty: Math.max(0, opening + supplierIn - supplierOut),
+      // Không ép về 0: số âm là dấu hiệu dữ liệu cần đối soát và phải được nhìn thấy.
+      current_qty: opening + supplierIn - supplierOut,
     };
     buckets[rentalGroupKey(item.product_code)].push(item);
   }
@@ -268,9 +279,9 @@ export type RentalHistory = {
 /**
  * Lịch sử giao/trả NCC của một loại vỏ trong năm đang xem.
  * - Khoảng thời gian: 01/01 của năm đến hết ngày đang chọn.
- * - Chỉ lấy chứng từ hiện hành đã tạo bút toán nợ vỏ; các chỉnh sửa Admin đã được phản ánh
- *   vào số lượng/ngày/địa điểm cuối cùng của chứng từ, không phơi các bút toán kỹ thuật đảo/ghi lại.
- * - Tồn đầu năm dùng cùng logic số dư NCC: số dư đầu kỳ gần nhất + giao/trả trước 01/01.
+ * - Giao: lấy số thực nhận của từng dòng ngay khi bên nhận đã xác nhận, kể cả đang chờ Trưởng kho.
+ * - Trả: lấy số thực trả của chứng từ hiện hành; phản hồi sau khi đã giao/trả vẫn giữ số thực tế hiện hành.
+ * - Tồn đầu năm dùng cùng nguồn chứng từ, nên đầu + giao - trả luôn đối chiếu được với tồn cuối.
  */
 export async function getRentalHistory(productCode: string, asOfDate?: string | null): Promise<RentalHistory | null> {
   const resolvedAsOfDate = normalizeRentalAsOfDate(asOfDate);
@@ -287,17 +298,12 @@ export async function getRentalHistory(productCode: string, asOfDate?: string | 
   `;
   if (!product || rentalGroupKey(String(product.code)) !== "industrial") return null;
 
-  const [openingRows, movementRows, closingRows] = await Promise.all([
+  const [openingRows, movementRows] = await Promise.all([
     sql<any[]>`
-      SELECT GREATEST(0,
+      SELECT (
         COALESCE(opening.qty,0)
-        + COALESCE(SUM(CASE
-            WHEN sl.reference_type IN ('supplier_delivery','supplier_delivery_mine') AND sl.delta>0 THEN sl.delta
-            WHEN sl.reference_type='supplier_delivery_revision' THEN sl.delta
-            WHEN sl.reference_type='supplier_return' AND sl.delta<0 THEN sl.delta
-            WHEN sl.reference_type='supplier_return_revision' THEN sl.delta
-            ELSE 0
-          END),0)
+        + COALESCE(delivery_mv.qty,0)
+        - COALESCE(return_mv.qty,0)
       )::float8 AS opening_qty
       FROM (SELECT 1) base
       LEFT JOIN LATERAL (
@@ -308,15 +314,31 @@ export async function getRentalHistory(productCode: string, asOfDate?: string | 
         ORDER BY ob.opening_date DESC
         LIMIT 1
       ) opening ON true
-      LEFT JOIN stock_ledger sl
-        ON sl.product_id=${product.id}::uuid
-       AND sl.occurred_at >= COALESCE(
-         (opening.opening_date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'),
-         '1900-01-01 00:00:00+07'::timestamptz
-       )
-       AND sl.occurred_at < (${yearStart}::date AT TIME ZONE 'Asia/Ho_Chi_Minh')
-       AND sl.reference_type IN ('supplier_delivery','supplier_delivery_mine','supplier_delivery_revision','supplier_return','supplier_return_revision')
-      GROUP BY opening.qty
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(di.confirmed_qty),0)::numeric AS qty
+        FROM supplier_delivery_items di
+        JOIN supplier_deliveries d ON d.id=di.delivery_id
+        WHERE di.product_id=${product.id}::uuid
+          AND d.status<>'cancelled'
+          AND d.delivery_date>=COALESCE(opening.opening_date,DATE '1900-01-01')
+          AND d.delivery_date<${yearStart}::date
+          AND di.confirmed_qty IS NOT NULL
+          AND (
+            di.status IN ('xsc_confirmed','confirmed')
+            OR (di.status='feedback' AND di.confirmed_by IS NOT NULL)
+          )
+      ) delivery_mv ON true
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(COALESCE(ri.confirmed_qty,ri.declared_qty)),0)::numeric AS qty
+        FROM supplier_return_items ri
+        JOIN supplier_returns r ON r.id=ri.supplier_return_id
+        WHERE ri.product_id=${product.id}::uuid
+          AND r.status<>'cancelled'
+          AND r.return_date>=COALESCE(opening.opening_date,DATE '1900-01-01')
+          AND r.return_date<${yearStart}::date
+          AND ri.status IN ('confirmed','feedback')
+          AND COALESCE(ri.confirmed_qty,ri.declared_qty,0)>0
+      ) return_mv ON true
     `,
     sql<any[]>`
       SELECT * FROM (
@@ -327,22 +349,21 @@ export async function getRentalHistory(productCode: string, asOfDate?: string | 
           l.name AS location_name,
           d.delivery_code AS reference_code,
           t.trip_code,
-          COALESCE(di.confirmed_qty,0)::float8 AS quantity,
+          di.confirmed_qty::float8 AS quantity,
           1::int AS event_order
         FROM supplier_delivery_items di
         JOIN supplier_deliveries d ON d.id=di.delivery_id
         JOIN locations l ON l.id=di.destination_location_id
         LEFT JOIN transport_trips t ON t.id=d.trip_id
         WHERE di.product_id=${product.id}::uuid
-          AND d.status='completed'
+          AND d.status<>'cancelled'
           AND d.delivery_date>=${yearStart}::date
           AND d.delivery_date<${endDateExclusive}::date
-          AND COALESCE(di.confirmed_qty,0)>0
-          AND EXISTS (
-            SELECT 1 FROM stock_ledger sl
-            WHERE sl.product_id=${product.id}::uuid
-              AND sl.reference_id=d.id
-              AND sl.reference_type IN ('supplier_delivery','supplier_delivery_mine','supplier_delivery_revision')
+          AND di.confirmed_qty IS NOT NULL
+          AND di.confirmed_qty>0
+          AND (
+            di.status IN ('xsc_confirmed','confirmed')
+            OR (di.status='feedback' AND di.confirmed_by IS NOT NULL)
           )
 
         UNION ALL
@@ -364,45 +385,10 @@ export async function getRentalHistory(productCode: string, asOfDate?: string | 
           AND r.status<>'cancelled'
           AND r.return_date>=${yearStart}::date
           AND r.return_date<${endDateExclusive}::date
+          AND ri.status IN ('confirmed','feedback')
           AND COALESCE(ri.confirmed_qty,ri.declared_qty,0)>0
-          AND EXISTS (
-            SELECT 1 FROM stock_ledger sl
-            WHERE sl.product_id=${product.id}::uuid
-              AND sl.reference_id=r.id
-              AND sl.reference_type IN ('supplier_return','supplier_return_revision')
-          )
       ) x
       ORDER BY event_date,event_order,reference_code,location_name
-    `,
-    sql<any[]>`
-      SELECT GREATEST(0,
-        COALESCE(opening.qty,0)
-        + COALESCE(SUM(CASE
-            WHEN sl.reference_type IN ('supplier_delivery','supplier_delivery_mine') AND sl.delta>0 THEN sl.delta
-            WHEN sl.reference_type='supplier_delivery_revision' THEN sl.delta
-            WHEN sl.reference_type='supplier_return' AND sl.delta<0 THEN sl.delta
-            WHEN sl.reference_type='supplier_return_revision' THEN sl.delta
-            ELSE 0
-          END),0)
-      )::float8 AS closing_qty
-      FROM (SELECT 1) base
-      LEFT JOIN LATERAL (
-        SELECT ob.opening_date,ob.qty
-        FROM supplier_container_opening_balances ob
-        WHERE ob.product_id=${product.id}::uuid
-          AND ob.opening_date<=${resolvedAsOfDate}::date
-        ORDER BY ob.opening_date DESC
-        LIMIT 1
-      ) opening ON true
-      LEFT JOIN stock_ledger sl
-        ON sl.product_id=${product.id}::uuid
-       AND sl.occurred_at >= COALESCE(
-         (opening.opening_date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'),
-         '1900-01-01 00:00:00+07'::timestamptz
-       )
-       AND sl.occurred_at < (${endDateExclusive}::date AT TIME ZONE 'Asia/Ho_Chi_Minh')
-       AND sl.reference_type IN ('supplier_delivery','supplier_delivery_mine','supplier_delivery_revision','supplier_return','supplier_return_revision')
-      GROUP BY opening.qty
     `,
   ]);
 
@@ -416,7 +402,8 @@ export async function getRentalHistory(productCode: string, asOfDate?: string | 
     const netChange = eventType === "delivery" ? quantity : -quantity;
     if (eventType === "delivery") supplierIn += quantity;
     else supplierOut += quantity;
-    running = Math.max(0, running + netChange);
+    // Không ép về 0. Nếu âm, đây là sai lệch nghiệp vụ cần đối soát.
+    running += netChange;
     return {
       event_date: String(row.event_date).slice(0, 10),
       event_type: eventType,
@@ -438,7 +425,8 @@ export async function getRentalHistory(productCode: string, asOfDate?: string | 
     openingQty,
     supplierIn,
     supplierOut,
-    closingQty: Number(closingRows[0]?.closing_qty || 0),
+    // Cùng một nguồn với bảng chi tiết, nên luôn đối chiếu được: đầu + giao - trả = cuối.
+    closingQty: running,
     rows,
   };
 }

@@ -1,5 +1,15 @@
-# Quản lý khí NMBP — V1.0.45
+# Quản lý khí NMBP — V1.0.46
 
+
+
+### Sửa lỗi V1.0.46 — đồng bộ toàn bộ cộng/trừ vỏ NCC
+
+- Nguồn tính **nợ vỏ NCC** chuyển sang chứng từ nghiệp vụ hiện hành, không còn phụ thuộc bút toán `stock_ledger` được tạo ở bước Trưởng kho hậu kiểm.
+- **NCC giao:** cộng ngay số `confirmed_qty` khi Thủ kho/XSC Mỏ đã xác nhận thực nhận (`xsc_confirmed`/`confirmed`; nếu đang phản hồi sau xác nhận vẫn giữ số thực tế hiện hành).
+- **Trả NCC:** trừ ngay số thực trả của dòng trả đã ghi nhận; Phiếu bị hủy không tính.
+- Áp dụng đồng bộ cho: KPI và khối vỏ trên Tổng quan, bộ lọc lịch sử theo ngày, modal lịch sử từng loại, báo cáo thuê vỏ theo ngày, XL-45 và đối soát vỏ tại bước kiểm kê chuyển đổi.
+- Không ép tồn vỏ âm về 0 trong màn hình/bảng đối soát; số âm được giữ để lộ lỗi dữ liệu. Tiền thuê không tính âm.
+- Không thay đổi schema Neon; **không cần chạy SQL migration**.
 
 ### Rà soát V1.0.45 — gói triển khai tinh gọn
 
@@ -14,7 +24,7 @@
 - Bấm trực tiếp vào từng dòng O₂/CO₂/N₂/Ar/Ar-CO₂ để mở cửa sổ lịch sử của loại đó.
 - Modal chỉ lấy dữ liệu từ **01/01 của năm đang xem đến hết ngày đã chọn**; không lấy giao dịch ngày sau.
 - Hiển thị: tồn đầu năm, tổng NCC giao, tổng đã trả NCC, tồn đến ngày đang xem và bảng chi tiết Ngày / Giao-Trả / Địa điểm / Phiếu-Chuyến / SL / Biến động / Tồn lũy kế.
-- Dữ liệu lịch sử lấy theo chứng từ hiện hành và đối chiếu bút toán nợ vỏ; chỉnh sửa Admin đã được phản ánh theo ngày/số lượng/địa điểm sau cùng.
+- Từ V1.0.46, dữ liệu lịch sử và tồn vỏ lấy trực tiếp theo chứng từ hiện hành đã xác nhận thực nhận/thực trả; không phụ thuộc trạng thái hoàn tất của Phiếu giao.
 - Không thay đổi schema và không cần chạy SQL migration.
 
 ### Bổ sung V1.0.43 — xem tồn vỏ thuê theo ngày

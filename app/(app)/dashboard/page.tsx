@@ -519,6 +519,7 @@ function RentalPanel({ rental, compact = false, industrialDateFilter }: { rental
 function RentalHistoryModal({ history }: { history: Awaited<ReturnType<typeof getRentalHistory>> }) {
   if (!history) return null;
   const closeHref = `/dashboard?rental_date=${encodeURIComponent(history.asOfDate)}`;
+  const hasNegativeBalance = history.openingQty < 0 || history.rows.some((row) => row.running_qty < 0);
   return <div className="rental-history-modal" role="presentation">
     <Link href={closeHref} className="rental-history-backdrop" aria-label="Đóng lịch sử giao trả"/>
     <section className="rental-history-dialog" role="dialog" aria-modal="true" aria-labelledby="rental-history-title">
@@ -553,7 +554,9 @@ function RentalHistoryModal({ history }: { history: Awaited<ReturnType<typeof ge
         </table>
         {!history.rows.length ? <div className="rental-history-empty">Không có giao/trả {history.product_name} trong khoảng thời gian này.</div> : null}
       </div>
-      <div className="rental-history-note">Nếu có nhiều chứng từ cùng ngày, tồn lũy kế trong bảng được sắp theo Giao trước, Trả sau vì dữ liệu nghiệp vụ hiện lưu theo ngày.</div>
+      <div className="rental-history-note">{hasNegativeBalance
+        ? "Cảnh báo đối soát: có thời điểm tồn vỏ âm. Hệ thống giữ nguyên số âm để lộ sai lệch dữ liệu, không tự ép về 0."
+        : "Dòng giao được cộng ngay khi bên nhận đã xác nhận số thực nhận; không chờ Trưởng kho hậu kiểm. Nếu cùng ngày có nhiều chứng từ, bảng sắp Giao trước, Trả sau."}</div>
     </section>
   </div>;
 }

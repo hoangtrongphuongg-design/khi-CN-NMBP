@@ -142,12 +142,22 @@ export async function getCylinderRentalDaily(params: {
       p.code AS product_code,
       p.name AS product_name,
       p.unit,
-      GREATEST(0,COALESCE(held.held_qty,0))::float8 AS held_qty,
-      COALESCE(mv.supplier_in,0)::float8 AS supplier_in,
-      COALESCE(mv.supplier_out,0)::float8 AS supplier_out,
-      (COALESCE(mv.supplier_in,0)-COALESCE(mv.supplier_out,0))::float8 AS net_change,
+      (
+        COALESCE(opening.qty,0)
+        + COALESCE(delivery_to_day.qty,0)
+        - COALESCE(return_to_day.qty,0)
+      )::float8 AS held_qty,
+      COALESCE(delivery_on_day.qty,0)::float8 AS supplier_in,
+      COALESCE(return_on_day.qty,0)::float8 AS supplier_out,
+      (COALESCE(delivery_on_day.qty,0)-COALESCE(return_on_day.qty,0))::float8 AS net_change,
       COALESCE(pr.unit_price,0)::float8 AS unit_price,
-      (GREATEST(0,COALESCE(held.held_qty,0))*COALESCE(pr.unit_price,0))::float8 AS rental_amount
+      (
+        GREATEST(0,
+          COALESCE(opening.qty,0)
+          + COALESCE(delivery_to_day.qty,0)
+          - COALESCE(return_to_day.qty,0)
+        ) * COALESCE(pr.unit_price,0)
+      )::float8 AS rental_amount
     FROM days
     CROSS JOIN eligible_products p
     LEFT JOIN LATERAL (
@@ -159,40 +169,53 @@ export async function getCylinderRentalDaily(params: {
       LIMIT 1
     ) opening ON true
     LEFT JOIN LATERAL (
-      SELECT (
-        COALESCE(opening.qty,0)
-        + COALESCE(SUM(
-            CASE
-              WHEN sl.reference_type IN ('supplier_delivery','supplier_delivery_mine') AND sl.delta>0 THEN sl.delta
-              WHEN sl.reference_type='supplier_delivery_revision' THEN sl.delta
-              WHEN sl.reference_type='supplier_return' AND sl.delta<0 THEN sl.delta
-              WHEN sl.reference_type='supplier_return_revision' THEN sl.delta
-              ELSE 0
-            END
-          ),0)
-      )::numeric AS held_qty
-      FROM stock_ledger sl
-      WHERE sl.product_id=p.id
-        AND sl.occurred_at >= COALESCE(
-          opening.opening_date AT TIME ZONE 'Asia/Ho_Chi_Minh',
-          '1900-01-01 00:00:00+07'::timestamptz
+      SELECT COALESCE(SUM(di.confirmed_qty),0)::numeric AS qty
+      FROM supplier_delivery_items di
+      JOIN supplier_deliveries d ON d.id=di.delivery_id
+      WHERE di.product_id=p.id
+        AND d.status<>'cancelled'
+        AND d.delivery_date>=COALESCE(opening.opening_date,DATE '1900-01-01')
+        AND d.delivery_date<=days.day
+        AND di.confirmed_qty IS NOT NULL
+        AND (
+          di.status IN ('xsc_confirmed','confirmed')
+          OR (di.status='feedback' AND di.confirmed_by IS NOT NULL)
         )
-        AND sl.occurred_at < ((days.day + interval '1 day') AT TIME ZONE 'Asia/Ho_Chi_Minh')
-    ) held ON true
+    ) delivery_to_day ON true
     LEFT JOIN LATERAL (
-      SELECT
-        COALESCE(SUM(CASE WHEN sl.reference_type IN ('supplier_delivery','supplier_delivery_mine') AND sl.delta>0 THEN sl.delta
-              WHEN sl.reference_type='supplier_delivery_revision' THEN sl.delta ELSE 0 END),0)::numeric AS supplier_in,
-        COALESCE(SUM(CASE
-          WHEN sl.reference_type='supplier_return' AND sl.delta<0 THEN -sl.delta
-          WHEN sl.reference_type='supplier_return_revision' THEN -sl.delta
-          ELSE 0
-        END),0)::numeric AS supplier_out
-      FROM stock_ledger sl
-      WHERE sl.product_id=p.id
-        AND sl.occurred_at >= (days.day AT TIME ZONE 'Asia/Ho_Chi_Minh')
-        AND sl.occurred_at < ((days.day + interval '1 day') AT TIME ZONE 'Asia/Ho_Chi_Minh')
-    ) mv ON true
+      SELECT COALESCE(SUM(COALESCE(ri.confirmed_qty,ri.declared_qty)),0)::numeric AS qty
+      FROM supplier_return_items ri
+      JOIN supplier_returns r ON r.id=ri.supplier_return_id
+      WHERE ri.product_id=p.id
+        AND r.status<>'cancelled'
+        AND r.return_date>=COALESCE(opening.opening_date,DATE '1900-01-01')
+        AND r.return_date<=days.day
+        AND ri.status IN ('confirmed','feedback')
+        AND COALESCE(ri.confirmed_qty,ri.declared_qty,0)>0
+    ) return_to_day ON true
+    LEFT JOIN LATERAL (
+      SELECT COALESCE(SUM(di.confirmed_qty),0)::numeric AS qty
+      FROM supplier_delivery_items di
+      JOIN supplier_deliveries d ON d.id=di.delivery_id
+      WHERE di.product_id=p.id
+        AND d.status<>'cancelled'
+        AND d.delivery_date=days.day
+        AND di.confirmed_qty IS NOT NULL
+        AND (
+          di.status IN ('xsc_confirmed','confirmed')
+          OR (di.status='feedback' AND di.confirmed_by IS NOT NULL)
+        )
+    ) delivery_on_day ON true
+    LEFT JOIN LATERAL (
+      SELECT COALESCE(SUM(COALESCE(ri.confirmed_qty,ri.declared_qty)),0)::numeric AS qty
+      FROM supplier_return_items ri
+      JOIN supplier_returns r ON r.id=ri.supplier_return_id
+      WHERE ri.product_id=p.id
+        AND r.status<>'cancelled'
+        AND r.return_date=days.day
+        AND ri.status IN ('confirmed','feedback')
+        AND COALESCE(ri.confirmed_qty,ri.declared_qty,0)>0
+    ) return_on_day ON true
     LEFT JOIN LATERAL (
       SELECT unit_price
       FROM price_rules
@@ -212,6 +235,7 @@ export async function getCylinderRentalDaily(params: {
     product_code: String(r.product_code),
     product_name: String(r.product_name),
     unit: String(r.unit),
+    // Giữ nguyên số âm nếu dữ liệu sai để báo cáo lộ ra sai lệch; tiền thuê không tính âm.
     held_qty: Number(r.held_qty ?? 0),
     supplier_in: Number(r.supplier_in ?? 0),
     supplier_out: Number(r.supplier_out ?? 0),
@@ -253,7 +277,7 @@ export function summarizeCylinderRental(rows: CylinderRentalDailyRow[]): Cylinde
       item.closing_qty = row.held_qty;
       item.unit_price_to = row.unit_price;
     }
-    item.bottle_days += row.held_qty;
+    item.bottle_days += Math.max(0, row.held_qty);
     item.rental_amount += row.rental_amount;
     if (row.held_qty > 0 && row.unit_price <= 0) item.missing_price_days += 1;
   }
@@ -493,14 +517,25 @@ export async function getXL45RentalDaily(params: {
       SELECT d::date AS day
       FROM generate_series(${params.startDate}::date,(${params.endDateExclusive}::date-interval '1 day')::date,interval '1 day') gs(d)
     ), lots AS (
-      SELECT x.id,x.product_id,x.delivered_date,x.qty_received,p.code AS product_code,p.name AS product_name
-      FROM xl45_lots x
-      JOIN supplier_delivery_items di ON di.id=x.delivery_item_id
+      -- Dùng trực tiếp số thực nhận đã được bên nhận xác nhận, kể cả Phiếu đang chờ Trưởng kho.
+      -- xl45_lots vẫn được nối nếu đã có để lấy allocation trả bồn/FIFO hiện hữu.
+      SELECT x.id AS xl45_lot_id,di.id AS delivery_item_id,di.product_id,d.delivery_date AS delivered_date,
+        di.confirmed_qty::numeric AS qty_received,p.code AS product_code,p.name AS product_name
+      FROM supplier_delivery_items di
       JOIN supplier_deliveries d ON d.id=di.delivery_id
-      JOIN products p ON p.id=x.product_id
-      WHERE x.delivered_date<${params.endDateExclusive}::date
-        AND (${params.productId ?? null}::uuid IS NULL OR x.product_id=${params.productId ?? null}::uuid)
-        AND (${params.locationId ?? null}::uuid IS NULL OR x.location_id=${params.locationId ?? null}::uuid)
+      JOIN products p ON p.id=di.product_id
+      LEFT JOIN xl45_lots x ON x.delivery_item_id=di.id
+      WHERE p.code IN ('LOX-XL45','LIN-XL45')
+        AND d.status<>'cancelled'
+        AND d.delivery_date<${params.endDateExclusive}::date
+        AND di.confirmed_qty IS NOT NULL
+        AND di.confirmed_qty>0
+        AND (
+          di.status IN ('xsc_confirmed','confirmed')
+          OR (di.status='feedback' AND di.confirmed_by IS NOT NULL)
+        )
+        AND (${params.productId ?? null}::uuid IS NULL OR di.product_id=${params.productId ?? null}::uuid)
+        AND (${params.locationId ?? null}::uuid IS NULL OR di.destination_location_id=${params.locationId ?? null}::uuid)
         AND (${params.supplierOrgId ?? null}::uuid IS NULL OR d.supplier_org_id=${params.supplierOrgId ?? null}::uuid)
     )
     SELECT days.day,l.product_id,l.product_code,l.product_name,
@@ -513,7 +548,7 @@ export async function getXL45RentalDaily(params: {
     LEFT JOIN LATERAL (
       SELECT COALESCE(SUM(a.quantity),0)::numeric AS returned_by_day
       FROM xl45_return_allocations a
-      WHERE a.xl45_lot_id=l.id AND a.return_date<=days.day
+      WHERE l.xl45_lot_id IS NOT NULL AND a.xl45_lot_id=l.xl45_lot_id AND a.return_date<=days.day
     ) ret ON true
     LEFT JOIN LATERAL (
       SELECT unit_price FROM price_rules
