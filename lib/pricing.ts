@@ -79,6 +79,41 @@ export function tripPriceType(visitsMine: boolean, co2LiquidSpecial: boolean): P
   return "trip_plant";
 }
 
+/**
+ * Cước 1 Phiếu giao NCC (V1.0.48):
+ * - Chỉ Nhà máy -> 1 chuyến Nhà máy; chỉ Mỏ -> 1 chuyến Mỏ.
+ * - Có cả Nhà máy + Mỏ -> tính 2 chuyến: cước Nhà máy + cước Mỏ.
+ * - CO2 lỏng chuyên dụng giữ nguyên 1 cước riêng.
+ * trip_kind giữ 'mine' cho chuyến Nhà máy + Mỏ (price_rule_id = giá Mỏ);
+ * transport_unit_price = transport_amount = tổng cước.
+ */
+export async function resolveTripCharge(
+  visitsPlant: boolean,
+  visitsMine: boolean,
+  co2LiquidSpecial: boolean,
+  businessDate: string,
+  tx: any = sql,
+  supplierOrgId?: string | null,
+) {
+  const kind = co2LiquidSpecial ? "co2_liquid" : visitsMine ? "mine" : "plant";
+  const mainRule = await resolvePriceRule(tripPriceType(visitsMine, co2LiquidSpecial), businessDate, null, tx, supplierOrgId);
+  if (!mainRule) return null;
+  let amount = Number(mainRule.unit_price);
+  if (!co2LiquidSpecial && visitsPlant && visitsMine) {
+    const plantRule = await resolvePriceRule("trip_plant", businessDate, null, tx, supplierOrgId);
+    if (!plantRule) return null;
+    amount += Number(plantRule.unit_price);
+  }
+  return { kind, priceRuleId: String(mainRule.id), amount };
+}
+
+export function tripKindLabel(tripKind: string, visitsPlant: boolean, visitsMine: boolean) {
+  if (tripKind === "co2_liquid") return "CO₂ lỏng chuyên dụng";
+  if (tripKind === "mine" && visitsPlant && visitsMine) return "Nhà máy + Mỏ (2 chuyến)";
+  if (tripKind === "mine") return "Mỏ Tà Thiết";
+  return "Nhà máy";
+}
+
 /** @deprecated V1.0.40 không còn dùng cơ chế đóng phiên bản trước khi tạo giá mới. */
 export async function closePreviousPriceRule(priceType: PriceType, effectiveFrom: string, productId?: string | null, tx: any = sql) {
   await tx`

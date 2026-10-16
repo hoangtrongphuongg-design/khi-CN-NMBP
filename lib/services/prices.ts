@@ -105,7 +105,9 @@ async function repriceContractRange(tx: any, contractId: string, fromDate: strin
 
   const tripRows = await tx`
     WITH resolved AS (
-      SELECT t.id,COALESCE(t.transport_amount,0)::numeric AS old_amount,pr.id AS new_rule_id,pr.unit_price AS new_unit_price
+      -- Chuyến có cả Nhà máy + Mỏ (không phải CO2 lỏng) = cước Mỏ + cước Nhà máy.
+      SELECT t.id,COALESCE(t.transport_amount,0)::numeric AS old_amount,pr.id AS new_rule_id,
+        (pr.unit_price + CASE WHEN t.trip_kind='mine' AND t.visits_plant AND t.visits_mine THEN plant.unit_price ELSE 0 END) AS new_unit_price
       FROM transport_trips t
       JOIN LATERAL (
         SELECT x.id,x.unit_price
@@ -122,9 +124,22 @@ async function repriceContractRange(tx: any, contractId: string, fromDate: strin
         ORDER BY CASE x.rule_kind WHEN 'adjustment' THEN 0 ELSE 1 END,x.effective_from DESC,x.created_at DESC
         LIMIT 1
       ) pr ON true
+      LEFT JOIN LATERAL (
+        SELECT x.unit_price
+        FROM price_rules x
+        WHERE x.contract_id=${contractId}::uuid
+          AND x.rule_kind IN ('adjustment','base')
+          AND x.price_type='trip_plant'
+          AND x.product_id IS NULL
+          AND x.effective_from<=t.trip_date
+          AND (x.effective_to IS NULL OR x.effective_to>=t.trip_date)
+        ORDER BY CASE x.rule_kind WHEN 'adjustment' THEN 0 ELSE 1 END,x.effective_from DESC,x.created_at DESC
+        LIMIT 1
+      ) plant ON true
       WHERE t.supplier_org_id=${contract.supplier_org_id}::uuid
         AND t.trip_date>=${fromDate}::date AND t.trip_date<=${toDate}::date
         AND t.status<>'cancelled'
+        AND NOT (t.trip_kind='mine' AND t.visits_plant AND t.visits_mine AND plant.unit_price IS NULL)
     ), updated AS (
       UPDATE transport_trips t
       SET price_rule_id=r.new_rule_id,transport_unit_price=r.new_unit_price,transport_amount=r.new_unit_price

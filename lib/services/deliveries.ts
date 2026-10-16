@@ -7,7 +7,7 @@ import {
   canFinalizePhcDelivery,
 } from "@/lib/auth/permissions";
 import { applyStockDelta, audit, getStockPointByCode, getSystemOperationState, recordHistoricalSupplierMovement } from "@/lib/stock";
-import { resolvePriceRule, tripPriceType } from "@/lib/pricing";
+import { resolvePriceRule, resolveTripCharge } from "@/lib/pricing";
 import { checkLowStock } from "@/lib/notifications/low-stock";
 import { toDateKey } from "@/lib/utils";
 
@@ -48,15 +48,14 @@ export async function createSupplierDelivery(profile: Profile, input: { delivery
     if (!visitsPlant && !visitsMine) throw new Error("Phiếu giao chưa có dữ liệu Nhà máy hoặc Mỏ");
 
     const co2Special = (productRows as any[]).some((x:any) => x.code === "LIQ-CO2");
-    const kind = co2Special ? "co2_liquid" : visitsMine ? "mine" : "plant";
-    const price = await resolvePriceRule(tripPriceType(visitsMine, co2Special), input.deliveryDate, null, tx, supplierId);
-    if (!price) throw new Error("Chưa cấu hình đơn giá vận chuyển có hiệu lực cho ngày giao");
+    const charge = await resolveTripCharge(visitsPlant, visitsMine, co2Special, input.deliveryDate, tx, supplierId);
+    if (!charge) throw new Error("Chưa cấu hình đơn giá vận chuyển có hiệu lực cho ngày giao");
 
-    // 1 Phiếu giao NCC = 1 chuyến = 1 cước.
-    // Nếu có bất kỳ dòng giao tại Mỏ thì cả chuyến áp dụng cước Mỏ (trừ chuyến CO2 lỏng chuyên dụng).
+    // 1 Phiếu giao NCC = 1 bản ghi transport_trips.
+    // Có cả Nhà máy + Mỏ -> cước Nhà máy + cước Mỏ (trừ chuyến CO2 lỏng chuyên dụng).
     const [trip] = await tx`
       INSERT INTO transport_trips(trip_code,trip_date,supplier_org_id,visits_plant,visits_mine,co2_liquid_special,trip_kind,price_rule_id,transport_unit_price,transport_amount,created_by,note)
-      VALUES (('TMP-'||gen_random_uuid()::text),${input.deliveryDate}::date,${supplierId}::uuid,${visitsPlant},${visitsMine},${co2Special},${kind},${price.id}::uuid,${Number(price.unit_price)},${Number(price.unit_price)},${profile.id}::uuid,${input.note || null})
+      VALUES (('TMP-'||gen_random_uuid()::text),${input.deliveryDate}::date,${supplierId}::uuid,${visitsPlant},${visitsMine},${co2Special},${charge.kind},${charge.priceRuleId}::uuid,${charge.amount},${charge.amount},${profile.id}::uuid,${input.note || null})
       RETURNING id
     `;
     const tripCode = stamp("CHUYEN", trip.id, input.deliveryDate);
@@ -90,7 +89,7 @@ export async function createSupplierDelivery(profile: Profile, input: { delivery
         visitsMine,
         lines,
         co2Special,
-        transportAmount: Number(price.unit_price),
+        transportAmount: charge.amount,
       },
     });
     return { id: delivery.id as string, code, tripId: trip.id as string, tripCode };
@@ -712,14 +711,14 @@ export async function adminCorrectSupplierDelivery(profile: Profile, deliveryId:
       if ((returnLocations as any[]).some((row:any)=>row.code==='PLANT') && !visitsPlant) throw new Error("Chuyến đã có Phiếu trả vỏ Nhà máy; không thể xóa toàn bộ điểm giao Nhà máy khỏi chuyến");
       if ((returnLocations as any[]).some((row:any)=>row.code==='MINE') && !visitsMine) throw new Error("Chuyến đã có Phiếu trả vỏ Mỏ; không thể xóa toàn bộ điểm giao Mỏ khỏi chuyến");
     }
-    const tripKind = co2Special ? "co2_liquid" : visitsMine ? "mine" : "plant";
-    const tripPrice = await resolvePriceRule(tripPriceType(visitsMine,co2Special),input.deliveryDate,null,tx,delivery.supplier_org_id);
-    if (!tripPrice) throw new Error("Không có đơn giá vận chuyển có hiệu lực cho ngày mới");
+    const tripCharge = await resolveTripCharge(visitsPlant,visitsMine,co2Special,input.deliveryDate,tx,delivery.supplier_org_id);
+    if (!tripCharge) throw new Error("Không có đơn giá vận chuyển có hiệu lực cho ngày mới");
+    const tripKind = tripCharge.kind;
     if (delivery.trip_id) {
       await tx`
         UPDATE transport_trips SET trip_date=${input.deliveryDate}::date,visits_plant=${visitsPlant},visits_mine=${visitsMine},
-          co2_liquid_special=${co2Special},trip_kind=${tripKind},price_rule_id=${tripPrice.id}::uuid,
-          transport_unit_price=${Number(tripPrice.unit_price)},transport_amount=${Number(tripPrice.unit_price)},note=${input.note || null}
+          co2_liquid_special=${co2Special},trip_kind=${tripKind},price_rule_id=${tripCharge.priceRuleId}::uuid,
+          transport_unit_price=${tripCharge.amount},transport_amount=${tripCharge.amount},note=${input.note || null}
         WHERE id=${delivery.trip_id}::uuid
       `;
     }
@@ -744,7 +743,7 @@ export async function adminCorrectSupplierDelivery(profile: Profile, deliveryId:
       RETURNING id,adjustment_code
     `;
     const after = {
-      delivery: { delivery_date: input.deliveryDate, note: input.note || null, status: delivery.status, visits_plant: visitsPlant, visits_mine: visitsMine, trip_kind: tripKind, transport_amount: Number(tripPrice.unit_price) },
+      delivery: { delivery_date: input.deliveryDate, note: input.note || null, status: delivery.status, visits_plant: visitsPlant, visits_mine: visitsMine, trip_kind: tripKind, transport_amount: tripCharge.amount },
       items: currentItems,
       adjustment_code: adjustment.adjustment_code,
     };

@@ -2,6 +2,7 @@ import ExcelJS from "exceljs";
 import { requireProfile } from "@/lib/auth/session";
 import { canViewCostReports } from "@/lib/auth/permissions";
 import { sql } from "@/lib/db";
+import { tripKindLabel } from "@/lib/pricing";
 import {
   getCylinderRentalDaily,
   getGoodsCostDetails,
@@ -152,7 +153,7 @@ export async function GET(request: Request) {
   `;
   const wsT = wb.addWorksheet("Chuyến & cước");
   wsT.columns = excelColumns([["Ngày","trip_date",13],["Phát sinh / chuyến","reference_code",28],["Loại cước","trip_kind",16],["Đơn giá cước","transport_unit_price",16],["Thành tiền","transport_amount",16],["Trạng thái","status",14]]);
-  trips.forEach((r:any)=>wsT.addRow(r)); styleSheet(wsT); wsT.getColumn("transport_unit_price").numFmt="#,##0"; wsT.getColumn("transport_amount").numFmt="#,##0";
+  trips.forEach((r:any)=>wsT.addRow({ ...r, trip_kind: tripKindLabel(r.trip_kind, r.visits_plant, r.visits_mine) })); styleSheet(wsT); wsT.getColumn("transport_unit_price").numFmt="#,##0"; wsT.getColumn("transport_amount").numFmt="#,##0";
 
   const xl45 = await sql`
     SELECT a.return_date,p.name AS product,l.name AS location,x.delivered_date,a.quantity::float8,a.charge_days,a.rental_amount::float8
