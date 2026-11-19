@@ -29,6 +29,9 @@ function diffLabel(value: number) {
 }
 
 export function StocktakePanel({ data }: { data: any }) {
+  if (data.missingSchema) {
+    return <Card><CardTitle>Kiểm kê từng khu</CardTitle><div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-[#92400E]">Chức năng chưa sẵn sàng: cần chạy file NEON_SQL/23_KIEM_KE_TUNG_KHU.sql trên Neon một lần.</div></Card>;
+  }
   const round = data.openRound as any | null;
   const points = data.points as any[];
   const zoneByPoint = new Map((data.zones as any[]).map((z:any)=>[String(z.stock_point_id),z]));

@@ -88,6 +88,9 @@ async function reconciliationNow(tx: any = sql) {
 
 export async function getStocktakeRoundData() {
   const state = await getSystemOperationState();
+  // Chưa chạy SQL 23 trên Neon -> hiện hướng dẫn thay vì làm lỗi cả tab Kiểm kê.
+  const [schema] = await sql`SELECT to_regclass('public.stocktake_zone_items') IS NOT NULL AS ready`;
+  if (!schema?.ready) return { state, missingSchema: true as const };
   const [openRound] = await sql`
     SELECT r.id,r.round_code,r.start_date,r.note,r.created_at,r.switched_to_live,u.full_name AS created_by_name
     FROM stocktake_rounds r LEFT JOIN users u ON u.id=r.created_by
