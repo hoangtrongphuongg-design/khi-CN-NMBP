@@ -352,7 +352,7 @@ export type CutoverCountInput = {
   qty: number;
 };
 
-async function expectedCutoverKeys(tx: any = sql) {
+export async function expectedCutoverKeys(tx: any = sql) {
   return tx`
     SELECT sp.id AS stock_point_id,p.id AS product_id,'full'::text AS bucket
     FROM stock_points sp CROSS JOIN products p
@@ -374,7 +374,7 @@ async function expectedCutoverKeys(tx: any = sql) {
   `;
 }
 
-async function supplierContainerSnapshotAt(dateKey: string, cutoverId?: string | null, tx: any = sql) {
+export async function supplierContainerSnapshotAt(dateKey: string, cutoverId?: string | null, tx: any = sql) {
   return tx`
     WITH counted AS (
       SELECT product_id,COALESCE(SUM(counted_qty),0)::numeric AS counted_qty

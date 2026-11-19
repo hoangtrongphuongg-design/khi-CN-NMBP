@@ -478,3 +478,11 @@ Có cơ cấu chi phí, xu hướng, top loại khí, bảng tổng hợp theo l
 - Không cho sửa/xóa Audit, mã kỹ thuật hoặc người tạo gốc.
 - Bắt buộc lý do. Hệ thống lưu dữ liệu trước/sau, người sửa và thời gian.
 - Nếu nghiệp vụ đã ảnh hưởng tồn/chi phí, hệ thống ghi bút toán điều chỉnh chênh lệch và tính lại phần phụ thuộc.
+
+## Kiểm kê từng khu, lặp lại nhiều đợt (V1.0.49)
+- Admin mở **Đợt kiểm kê** (mỗi lúc 1 đợt). Đợt đầu tiên khi hệ thống còn Hồi nhập lịch sử sẽ chuyển sang Vận hành chính thức từ ngày bắt đầu đợt.
+- Trong đợt, từng khu (Mỏ/Nhóm Cối, Kho Hậu cần, từng nhóm) đếm vào ngày khác nhau: **Bắt đầu** (web chụp số máy) → nhập số đếm → **Xác nhận**.
+- Chỉ được Bắt đầu khi khu không còn phiếu dở dang (Đổi/Mượn/Trả chưa xử lý; Phiếu giao NCC tại địa điểm đó chưa hoàn tất; điều chuyển chưa xong).
+- Điều chỉnh tồn = số đếm − số máy lúc bắt đầu; phiếu phát sinh trong lúc đếm được giữ nguyên. Chốt Kho thì số đầu kỳ chưa phân loại về 0.
+- Đóng đợt: đối chiếu tổng Kho + nhóm + Mỏ với số vỏ theo NCC; còn chênh lệch thì bắt buộc lý do. Khu không đếm giữ nguyên số.
+- Có thể mở đợt mới bất cứ lúc nào để kiểm kê lại. SQL 23 tạo bảng `stocktake_rounds`, `stocktake_zone_counts`, `stocktake_zone_items`.

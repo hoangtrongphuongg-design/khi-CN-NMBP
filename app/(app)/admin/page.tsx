@@ -14,6 +14,8 @@ import type { AppRole } from "@/types/app";
 import { formatCurrency, formatNumber, toDateInput, toDateKey } from "@/lib/utils";
 import { getPriceAdminData } from "@/lib/services/prices";
 import { PriceManagement } from "@/components/admin/price-management";
+import { StocktakePanel } from "@/components/admin/stocktake-panel";
+import { getStocktakeRoundData } from "@/lib/services/stocktake";
 
 const tabs = [
   ["data","Chỉnh sửa dữ liệu"],["cutover","Kiểm kê & chốt"],["audit","Audit"],["users","User & phân quyền"],["prices","Đơn giá"],["thresholds","Ngưỡng tồn"],["calendar","Lịch làm việc"],["master","Danh mục & số dư"]
@@ -37,6 +39,7 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
     p.edit && dataType !== "all" ? getAdminOperationalRecord(dataType,p.edit) : Promise.resolve(null),
   ]);
   const priceAdmin = tab === "prices" ? await getPriceAdminData({ month: p.price_month, contractId: p.price_contract }) : null;
+  const stocktakeData = tab === "cutover" ? await getStocktakeRoundData() : null;
   const editUser = p.edit_user ? users.find((u:any)=>String(u.id)===String(p.edit_user)) : null;
   const returnableProducts = products.filter((product:any)=>product.returnable_container);
   const warehousePoint = stockPoints.find((point:any)=>point.kind === "warehouse");
@@ -106,8 +109,10 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
           <div><CardTitle>Kiểm kê & chốt vận hành</CardTitle><p className="mt-1 max-w-3xl text-sm text-[var(--muted-foreground)]">Giai đoạn hồi nhập chỉ dùng Phiếu NCC để dựng chi phí và số vỏ theo NCC; không cố tái dựng tồn vật lý khi thiếu lịch sử Đổi/Mượn/Trả. Số kiểm kê thực tế sẽ trở thành tồn chuẩn từ ngày vận hành chính thức.</p></div>
           <Badge tone={cutoverData.state.mode === "live" ? "success" : "warning"}>{cutoverData.state.mode === "live" ? "Đang vận hành chính thức" : "Hồi nhập lịch sử"}</Badge>
         </div>
-        {cutoverData.state.mode === "live" ? <div className="mt-4 grid gap-2 rounded-xl border border-green-200 bg-green-50 p-4 text-sm"><div><strong>Ngày kiểm kê:</strong> {String(cutoverData.state.stocktake_date || "").slice(0,10)}</div><div><strong>Vận hành chính thức:</strong> {String(cutoverData.state.go_live_date || "").slice(0,10)}</div><div><strong>Người chốt:</strong> {cutoverData.state.finalized_by_name || "ADMIN"}</div><div className="text-[var(--muted-foreground)]">Mốc này đã khóa. Nếu sau này phát hiện chênh lệch, xử lý bằng điều chỉnh có audit; không chốt lại số dư chuyển đổi.</div></div> : <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm"><strong>Trong chế độ này:</strong> Phiếu NCC giao/trả lịch sử vẫn tính mua khí, vận chuyển, thuê vỏ và XL-45 theo ngày chứng từ, nhưng không ép tồn vật lý Kho/Nhóm phải khớp. Sau kiểm kê, Admin chốt một lần để chuyển sang vận hành thật.</div>}
+        {cutoverData.state.mode === "live" ? <div className="mt-4 grid gap-2 rounded-xl border border-green-200 bg-green-50 p-4 text-sm"><div><strong>Ngày kiểm kê:</strong> {String(cutoverData.state.stocktake_date || "").slice(0,10)}</div><div><strong>Vận hành chính thức:</strong> {String(cutoverData.state.go_live_date || "").slice(0,10)}</div><div><strong>Người chốt:</strong> {cutoverData.state.finalized_by_name || "ADMIN"}</div><div className="text-[var(--muted-foreground)]">Mốc chuyển đổi này đã khóa. Khi cần kiểm kê lại, dùng "Kiểm kê từng khu" bên dưới: mở đợt mới và chỉ đếm lại các khu cần thiết.</div></div> : <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm"><strong>Trong chế độ này:</strong> Phiếu NCC giao/trả lịch sử vẫn tính mua khí, vận chuyển, thuê vỏ và XL-45 theo ngày chứng từ, nhưng không ép tồn vật lý Kho/Nhóm phải khớp. Sau kiểm kê, Admin chốt một lần để chuyển sang vận hành thật.</div>}
       </Card>
+
+      {stocktakeData ? <StocktakePanel data={stocktakeData}/> : null}
 
       {cutoverData.state.mode !== "live" ? <form action="/api/admin/stock" method="post" className="grid gap-4"><input type="hidden" name="action" value="save_cutover"/>
         <Card><CardTitle>1. Mốc kiểm kê</CardTitle><div className="mt-4 grid gap-3 md:grid-cols-3"><FormField label="Ngày kiểm kê"><Input name="stocktake_date" type="date" defaultValue={stocktakeDefault} required/></FormField><FormField label="Ngày vận hành chính thức"><Input name="go_live_date" type="date" defaultValue={goLiveDefault} required/></FormField><FormField label="Ghi chú"><Input name="note" defaultValue={cutoverData.draft?.note || ""} placeholder="Ví dụ: Kiểm kê chuyển đổi toàn Nhà máy"/></FormField></div></Card>
