@@ -39,6 +39,7 @@ export function StocktakePanel({ data }: { data: any }) {
   const countingZones = (data.zones as any[]).filter((z:any)=>z.status === "counting");
   const reconciliation = data.reconciliation as any[];
   const hasDifference = reconciliation.some((r:any)=>Math.abs(Number(r.difference || 0)) > 0.000001);
+  const hasShortage = reconciliation.some((r:any)=>Number(r.difference || 0) < -0.000001);
   // Dòng tổng chỉ cộng vỏ chai khí CN; XL-45/LPG khác đơn vị nên không cộng chung.
   const cylinderRows = reconciliation.filter((r:any)=>r.cylinder_rental_eligible);
   const sumOf = (field: string) => cylinderRows.reduce((s:number,r:any)=>s+Number(r[field] || 0),0);
@@ -64,10 +65,10 @@ export function StocktakePanel({ data }: { data: any }) {
     </Card>
 
     <Card className="overflow-hidden p-0">
-      <div className="border-b border-[var(--border)] p-4 md:p-5"><div className="flex flex-wrap items-center justify-between gap-2"><div><CardTitle>Đối chiếu số vỏ: vận hành trên web ↔ NCC cho thuê (tính đến hôm nay)</CardTitle><p className="mt-1 max-w-4xl text-xs text-[var(--muted-foreground)]">Tổng vận hành = Kho Hậu cần (đầy + rỗng + bồn/khác) + các nhóm + Mỏ. NCC cho thuê = số dư đầu kỳ + NCC giao − trả NCC. Chênh lệch dương: trên web nhiều hơn NCC; âm: thiếu chai hoặc còn nhóm chưa kiểm kê.</p></div><Badge tone={hasDifference ? "warning" : "success"}>{hasDifference ? "Còn chênh lệch" : "Khớp số vỏ"}</Badge></div></div>
+      <div className="border-b border-[var(--border)] p-4 md:p-5"><div className="flex flex-wrap items-center justify-between gap-2"><div><CardTitle>Đối chiếu số vỏ: vận hành trên web ↔ NCC cho thuê (tính đến hôm nay)</CardTitle><p className="mt-1 max-w-4xl text-xs text-[var(--muted-foreground)]">Tổng vận hành = Kho Hậu cần (đầy + rỗng + bồn/khác) + các nhóm + Mỏ. NCC cho thuê = số dư đầu kỳ + NCC giao − trả NCC. Chênh lệch dương (trên web nhiều hơn NCC) không tô màu; dòng tô vàng là thiếu chai so với NCC hoặc còn nhóm chưa kiểm kê.</p></div><Badge tone={hasShortage ? "warning" : "success"}>{hasShortage ? "Thiếu so với NCC" : "Không thiếu so với NCC"}</Badge></div></div>
       <div className="overflow-x-auto"><table className="mobile-card-table w-full text-sm">
         <thead className="bg-[var(--muted)]"><tr><th className="p-3 text-left">Loại</th><th className="p-3 text-right">Kho đầy</th><th className="p-3 text-right">Kho rỗng</th><th className="p-3 text-right">Kho khác</th><th className="p-3 text-right">Các nhóm</th><th className="p-3 text-right">Mỏ</th><th className="p-3 text-right">Tổng vận hành</th><th className="p-3 text-right">NCC cho thuê</th><th className="p-3 text-right">Chênh lệch</th></tr></thead>
-        <tbody>{reconciliation.map((row:any)=><tr key={row.product_id} className={`border-t border-[var(--border)] ${Math.abs(Number(row.difference || 0)) > 0.000001 ? "bg-amber-50" : ""}`}>
+        <tbody>{reconciliation.map((row:any)=><tr key={row.product_id} className={`border-t border-[var(--border)] ${Number(row.difference || 0) < -0.000001 ? "bg-amber-50" : ""}`}>
           <td data-label="Loại" className="p-3"><strong>{row.product_name}</strong><div className="text-xs text-[var(--muted-foreground)]">{row.unit}</div></td>
           <td data-label="Kho đầy" className="p-3 text-right font-mono-data">{formatNumber(row.warehouse_full)}</td>
           <td data-label="Kho rỗng" className="p-3 text-right font-mono-data">{formatNumber(row.warehouse_empty)}</td>
