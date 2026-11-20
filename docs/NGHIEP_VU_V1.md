@@ -490,3 +490,8 @@ Có cơ cấu chi phí, xu hướng, top loại khí, bảng tổng hợp theo l
 ## Nhiều Giám sát / Đốc công trong một nhóm (V1.0.50)
 - Một nhóm được có nhiều tài khoản Giám sát và nhiều tài khoản Đốc công cùng hoạt động; quyền của từng người không đổi.
 - SQL 24 bỏ 2 ràng buộc `users_one_supervisor_per_group_idx` và `users_one_foreman_per_group_idx`.
+
+## Ngừng sử dụng nhóm (V1.0.51)
+- Nhóm không xóa hẳn để giữ lịch sử phiếu, sổ tồn và Audit; Admin bấm "Ngừng sử dụng" tại Quản trị → Danh mục & số dư.
+- Chỉ ngừng được khi nhóm đã trả hết chai về Kho Hậu cần bằng phiếu Trả (Thủ kho xác nhận), không còn phiếu Đổi/Mượn/Trả dở dang và không còn tài khoản hoạt động. Nhóm Cối/Mỏ không được ngừng.
+- Nhóm "Nhà thầu" mẫu ban đầu được bỏ khỏi dữ liệu mẫu; nhà thầu mới thì Admin tự tạo nhóm và đặt tên.
