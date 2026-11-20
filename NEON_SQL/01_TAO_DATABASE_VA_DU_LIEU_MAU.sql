@@ -57,8 +57,6 @@ CREATE TABLE IF NOT EXISTS users (
 );
 CREATE INDEX IF NOT EXISTS users_group_idx ON users(group_id);
 CREATE INDEX IF NOT EXISTS users_role_idx ON users(role);
-CREATE UNIQUE INDEX IF NOT EXISTS users_one_foreman_per_group_idx ON users(group_id) WHERE role='foreman' AND active=true;
-CREATE UNIQUE INDEX IF NOT EXISTS users_one_supervisor_per_group_idx ON users(group_id) WHERE role='supervisor' AND active=true;
 
 CREATE TABLE IF NOT EXISTS user_sessions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

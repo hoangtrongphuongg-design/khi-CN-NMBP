@@ -486,3 +486,7 @@ Có cơ cấu chi phí, xu hướng, top loại khí, bảng tổng hợp theo l
 - Điều chỉnh tồn = số đếm − số máy lúc bắt đầu; phiếu phát sinh trong lúc đếm được giữ nguyên. Chốt Kho thì số đầu kỳ chưa phân loại về 0.
 - Đóng đợt: đối chiếu tổng Kho + nhóm + Mỏ với số vỏ theo NCC; còn chênh lệch thì bắt buộc lý do. Khu không đếm giữ nguyên số.
 - Có thể mở đợt mới bất cứ lúc nào để kiểm kê lại. SQL 23 tạo bảng `stocktake_rounds`, `stocktake_zone_counts`, `stocktake_zone_items`.
+
+## Nhiều Giám sát / Đốc công trong một nhóm (V1.0.50)
+- Một nhóm được có nhiều tài khoản Giám sát và nhiều tài khoản Đốc công cùng hoạt động; quyền của từng người không đổi.
+- SQL 24 bỏ 2 ràng buộc `users_one_supervisor_per_group_idx` và `users_one_foreman_per_group_idx`.
