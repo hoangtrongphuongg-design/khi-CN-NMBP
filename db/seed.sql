@@ -17,8 +17,7 @@ FROM (VALUES
   ('CBL','Nhóm CBL','PLANT'),
   ('NBS-NT','Nhóm NBS-NT','PLANT'),
   ('LO','Nhóm Lò','PLANT'),
-  ('NXM','Nhóm NXM','PLANT'),
-  ('NHA-THAU','Nhà thầu','PLANT')
+  ('NXM','Nhóm NXM','PLANT')
 ) AS v(code,name,location_code)
 JOIN locations l ON l.code = v.location_code
 ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name, location_id = EXCLUDED.location_id, active = true;

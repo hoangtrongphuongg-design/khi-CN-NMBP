@@ -247,6 +247,60 @@ export async function createGroup(profile: Profile, code: string, name: string, 
   return group.id as string;
 }
 
+/** Nhóm đang dùng + tổng chai đang giữ, để Admin xem trước khi Ngừng sử dụng nhóm. */
+export async function listActiveGroupsWithHoldings() {
+  return sql`
+    SELECT g.id,g.code,g.name,l.name AS location_name,
+      COALESCE((SELECT SUM(sb.qty) FROM stock_balances sb WHERE sb.stock_point_id=sp.id),0)::float8 AS held_qty,
+      (SELECT count(*)::int FROM users u WHERE u.group_id=g.id AND u.active) AS active_users
+    FROM work_groups g
+    JOIN locations l ON l.id=g.location_id
+    LEFT JOIN stock_points sp ON sp.group_id=g.id
+    WHERE g.active
+    ORDER BY l.code,g.name
+  `;
+}
+
+/**
+ * Ngừng sử dụng nhóm (không xóa để giữ lịch sử phiếu/sổ tồn/Audit).
+ * Chỉ khóa khi nhóm đã trả hết chai về Kho bằng phiếu Trả, không còn phiếu dở dang và không còn tài khoản hoạt động.
+ */
+export async function deactivateGroup(profile: Profile, groupId: string, reason: string) {
+  assertAdmin(profile);
+  const cleanReason = String(reason || "").trim();
+  if (!cleanReason) throw new Error("Bắt buộc nhập lý do ngừng sử dụng nhóm");
+  await sql.begin(async (tx) => {
+    const [group] = await tx`SELECT id,code,name,active FROM work_groups WHERE id=${groupId}::uuid FOR UPDATE`;
+    if (!group || !group.active) throw new Error("Không tìm thấy nhóm đang sử dụng");
+    if (group.code === "COI") throw new Error("Không được ngừng sử dụng Nhóm Cối / Mỏ Tà Thiết");
+
+    const held = await tx`
+      SELECT p.name,sb.qty::float8 AS qty
+      FROM stock_points sp
+      JOIN stock_balances sb ON sb.stock_point_id=sp.id
+      JOIN products p ON p.id=sb.product_id
+      WHERE sp.group_id=${groupId}::uuid AND sb.qty>0
+      ORDER BY p.display_order,p.name
+    `;
+    if (held.length) {
+      const list = (held as any[]).map((r:any)=>`${r.name}: ${Number(r.qty)}`).join("; ");
+      throw new Error(`${group.name} còn chai chưa trả về Kho (${list}). Đốc công/Giám sát lập phiếu Trả về Kho Hậu cần, Thủ kho xác nhận xong rồi mới ngừng sử dụng nhóm.`);
+    }
+    const pending = await tx`
+      SELECT request_code FROM internal_requests
+      WHERE group_id=${groupId}::uuid AND status IN ('pending','approved') ORDER BY requested_at
+    `;
+    if (pending.length) throw new Error(`${group.name} còn ${pending.length} phiếu Đổi/Mượn/Trả chưa xử lý (${(pending as any[]).map((r:any)=>r.request_code).join(", ")}).`);
+    const users = await tx`SELECT username,full_name FROM users WHERE group_id=${groupId}::uuid AND active ORDER BY full_name`;
+    if (users.length) throw new Error(`${group.name} còn ${users.length} tài khoản đang hoạt động (${(users as any[]).map((u:any)=>u.full_name || u.username).join(", ")}). Hãy khóa hoặc chuyển nhóm các tài khoản này trước.`);
+
+    await tx`UPDATE work_groups SET active=false WHERE id=${groupId}::uuid`;
+    await tx`UPDATE stock_points SET active=false WHERE group_id=${groupId}::uuid`;
+    await audit({ tx, actorUserId: profile.id, action: "deactivate", entityType: "work_group", entityId: groupId,
+      before: { code: group.code, name: group.name, active: true }, after: { active: false }, note: cleanReason });
+  });
+}
+
 export async function upsertGroupNorm(profile: Profile, groupId: string, productId: string, normQty: number) {
   assertAdmin(profile);
   await sql`
