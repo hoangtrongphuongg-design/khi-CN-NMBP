@@ -16,11 +16,13 @@ function requestPrefix(type: RequestType) {
 
 /**
  * Nhóm mà tài khoản được tạo phiếu Đổi/Mượn/Trả.
- * Đốc công/Giám sát: nhóm của mình. Quản lý XSC · Workshop: luôn là Nhóm Workshop (V1.0.52).
+ * Đốc công/Giám sát: nhóm của mình. Quản lý XSC · Workshop: nhóm Admin gắn cho tài khoản
+ * (cùng nhóm với Đốc công Workshop); chưa gắn thì dùng nhóm mã WORKSHOP.
  */
 export async function requestGroupIdFor(profile: Profile, tx: any = sql): Promise<string | null> {
   if (["foreman","supervisor"].includes(profile.role)) return profile.group_id || null;
   if (profile.role === "workshop") {
+    if (profile.group_id) return profile.group_id;
     const [group] = await tx`SELECT id FROM work_groups WHERE code='WORKSHOP' AND active=true LIMIT 1`;
     return group ? String(group.id) : null;
   }

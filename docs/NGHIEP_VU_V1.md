@@ -497,6 +497,6 @@ Có cơ cấu chi phí, xu hướng, top loại khí, bảng tổng hợp theo l
 - Nhóm "Nhà thầu" mẫu ban đầu được bỏ khỏi dữ liệu mẫu; nhà thầu mới thì Admin tự tạo nhóm và đặt tên.
 
 ## Quản lý XSC · Workshop tạo phiếu cho Nhóm Workshop (V1.0.52)
-- Tài khoản Workshop quản lý toàn bộ các nhóm, đồng thời là Đốc công Nhóm Workshop: được tạo phiếu Đổi/Mượn/Trả, phiếu luôn thuộc Nhóm Workshop (không cần Admin gắn nhóm).
+- Tài khoản Workshop quản lý toàn bộ các nhóm, đồng thời là Đốc công Nhóm Workshop: được tạo phiếu Đổi/Mượn/Trả cho nhóm Admin gắn vào tài khoản (cùng nhóm với Đốc công Workshop); chưa gắn thì dùng nhóm mã WORKSHOP.
 - Workshop được tự duyệt Mượn trong giờ hành chính và tự hậu kiểm phiếu của mình; Trưởng kho vẫn duyệt được.
 - Đổi/Trả vẫn không vượt số chai Nhóm Workshop đang giữ.
