@@ -14,8 +14,22 @@ function requestPrefix(type: RequestType) {
   return type === "exchange" ? "DOI" : type === "borrow" ? "MUON" : "TRA";
 }
 
+/**
+ * Nhóm mà tài khoản được tạo phiếu Đổi/Mượn/Trả.
+ * Đốc công/Giám sát: nhóm của mình. Quản lý XSC · Workshop: luôn là Nhóm Workshop (V1.0.52).
+ */
+export async function requestGroupIdFor(profile: Profile, tx: any = sql): Promise<string | null> {
+  if (["foreman","supervisor"].includes(profile.role)) return profile.group_id || null;
+  if (profile.role === "workshop") {
+    const [group] = await tx`SELECT id FROM work_groups WHERE code='WORKSHOP' AND active=true LIMIT 1`;
+    return group ? String(group.id) : null;
+  }
+  return null;
+}
+
 export async function getGroupQuickData(profile: Profile) {
-  if (!profile.group_id) return [];
+  const groupId = await requestGroupIdFor(profile) ?? (profile.role === "worker" ? profile.group_id : null);
+  if (!groupId) return [];
   const rows = await sql`
     SELECT p.id,p.code,p.name,p.unit,
       COALESCE(gb.qty,0)::float8 AS group_qty,
@@ -24,13 +38,13 @@ export async function getGroupQuickData(profile: Profile) {
       COALESCE(wu.qty,0)::float8 AS warehouse_unclassified,
       COALESCE(gn.norm_qty,0)::float8 AS norm_qty
     FROM products p
-    LEFT JOIN stock_points gp ON gp.group_id=${profile.group_id}::uuid AND gp.active=true
+    LEFT JOIN stock_points gp ON gp.group_id=${groupId}::uuid AND gp.active=true
     LEFT JOIN stock_balances gb ON gb.stock_point_id=gp.id AND gb.product_id=p.id AND gb.bucket='managed'
     LEFT JOIN stock_points wh ON wh.code='WH-PHC' AND wh.active=true
     LEFT JOIN stock_balances wf ON wf.stock_point_id=wh.id AND wf.product_id=p.id AND wf.bucket='full'
     LEFT JOIN stock_balances we ON we.stock_point_id=wh.id AND we.product_id=p.id AND we.bucket='empty'
     LEFT JOIN stock_balances wu ON wu.stock_point_id=wh.id AND wu.product_id=p.id AND wu.bucket='unclassified'
-    LEFT JOIN group_norms gn ON gn.group_id=${profile.group_id}::uuid AND gn.product_id=p.id
+    LEFT JOIN group_norms gn ON gn.group_id=${groupId}::uuid AND gn.product_id=p.id
     WHERE p.active=true AND p.internal_group_tracking=true
     ORDER BY p.display_order,p.name
   `;
@@ -42,8 +56,9 @@ export async function getGroupQuickData(profile: Profile) {
 }
 
 export async function createInternalRequest(profile: Profile, input: { requestType: RequestType; items: InternalRequestItemInput[]; note?: string }) {
-  if (!["foreman","supervisor"].includes(profile.role) || !profile.group_id) throw new Error("Không có quyền tạo phiếu cho nhóm");
-  const [group] = await sql`SELECT code FROM work_groups WHERE id=${profile.group_id}::uuid LIMIT 1`;
+  const groupId = await requestGroupIdFor(profile);
+  if (!groupId) throw new Error(profile.role === "workshop" ? "Chưa có Nhóm Workshop đang hoạt động để tạo phiếu" : "Không có quyền tạo phiếu cho nhóm");
+  const [group] = await sql`SELECT code FROM work_groups WHERE id=${groupId}::uuid LIMIT 1`;
   if (group?.code === "COI") throw new Error("Nhóm Cối/Mỏ chỉ theo dõi số chai; khi cần đổi liên hệ Workshop qua Zalo");
 
   const items = input.items
@@ -56,7 +71,7 @@ export async function createInternalRequest(profile: Profile, input: { requestTy
 
   let requestId = "";
   await sql.begin(async (tx) => {
-    const groupPoint = await getGroupStockPoint(profile.group_id!, tx);
+    const groupPoint = await getGroupStockPoint(groupId, tx);
     const validProducts: any[] = [];
     for (const item of items) {
       const [product] = await tx`SELECT id,name FROM products WHERE id=${item.productId}::uuid AND active=true AND internal_group_tracking=true LIMIT 1`;
@@ -72,7 +87,7 @@ export async function createInternalRequest(profile: Profile, input: { requestTy
     const first = items[0];
     const [row] = await tx`
       INSERT INTO internal_requests(request_code,request_type,group_id,product_id,requested_qty,requested_by,note,approval_mode)
-      VALUES ('TMP-'||gen_random_uuid()::text,${input.requestType},${profile.group_id}::uuid,${first.productId}::uuid,${first.quantity},${profile.id}::uuid,${input.note || null},
+      VALUES ('TMP-'||gen_random_uuid()::text,${input.requestType},${groupId}::uuid,${first.productId}::uuid,${first.quantity},${profile.id}::uuid,${input.note || null},
         CASE WHEN ${input.requestType}='borrow' THEN NULL ELSE 'not_required' END)
       RETURNING id
     `;

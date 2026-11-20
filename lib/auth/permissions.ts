@@ -18,7 +18,8 @@ export function canViewAllInternal(profile: Profile) {
 }
 
 export function canCreateGroupRequest(profile: Profile) {
-  return ["foreman","supervisor"].includes(profile.role) && Boolean(profile.group_id);
+  // Quản lý XSC · Workshop tạo phiếu cho Nhóm Workshop (nhóm được xác định ở service).
+  return (["foreman","supervisor"].includes(profile.role) && Boolean(profile.group_id)) || profile.role === "workshop";
 }
 
 export function canApproveOfficeBorrow(profile: Profile) {
