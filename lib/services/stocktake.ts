@@ -63,22 +63,41 @@ async function pendingDocumentsForPoint(tx: any, point: any) {
 
 async function reconciliationNow(tx: any = sql) {
   const supplierRows = await supplierContainerSnapshotAt(toDateInput(), null, tx);
+  // Tồn đang vận hành trên web, chia theo vị trí: Kho đầy/rỗng/khác, các nhóm, Mỏ (Nhóm Cối).
   const systemRows = await tx`
-    SELECT sb.product_id,COALESCE(SUM(sb.qty),0)::float8 AS qty
-    FROM stock_balances sb
-    JOIN stock_points sp ON sp.id=sb.stock_point_id
-    WHERE sp.active AND sp.kind IN ('warehouse','group')
-      AND sb.bucket IN ('full','empty','available','managed','unclassified')
-    GROUP BY sb.product_id
+    SELECT p.id AS product_id,p.cylinder_rental_eligible,
+      COALESCE(SUM(sb.qty) FILTER (WHERE sp.kind='warehouse' AND sb.bucket='full'),0)::float8 AS warehouse_full,
+      COALESCE(SUM(sb.qty) FILTER (WHERE sp.kind='warehouse' AND sb.bucket='empty'),0)::float8 AS warehouse_empty,
+      COALESCE(SUM(sb.qty) FILTER (WHERE sp.kind='warehouse' AND sb.bucket IN ('available','unclassified')),0)::float8 AS warehouse_other,
+      COALESCE(SUM(sb.qty) FILTER (WHERE sp.kind='group' AND g.code IS DISTINCT FROM 'COI' AND sb.bucket='managed'),0)::float8 AS groups_qty,
+      COALESCE(SUM(sb.qty) FILTER (WHERE sp.kind='group' AND g.code='COI' AND sb.bucket='managed'),0)::float8 AS mine_qty
+    FROM products p
+    LEFT JOIN stock_balances sb ON sb.product_id=p.id
+    LEFT JOIN stock_points sp ON sp.id=sb.stock_point_id AND sp.active AND sp.kind IN ('warehouse','group')
+    LEFT JOIN work_groups g ON g.id=sp.group_id
+    WHERE p.active AND p.returnable_container
+    GROUP BY p.id,p.cylinder_rental_eligible
   `;
-  const systemByProduct = new Map((systemRows as any[]).map((r: any) => [String(r.product_id), Number(r.qty || 0)]));
+  const systemByProduct = new Map((systemRows as any[]).map((r: any) => [String(r.product_id), r]));
   return (supplierRows as any[]).map((r: any) => {
+    const s = systemByProduct.get(String(r.product_id)) ?? {};
+    const warehouseFull = Number(s.warehouse_full || 0);
+    const warehouseEmpty = Number(s.warehouse_empty || 0);
+    const warehouseOther = Number(s.warehouse_other || 0);
+    const groupsQty = Number(s.groups_qty || 0);
+    const mineQty = Number(s.mine_qty || 0);
     const supplierQty = Number(r.supplier_qty || 0);
-    const systemQty = systemByProduct.get(String(r.product_id)) ?? 0;
+    const systemQty = warehouseFull + warehouseEmpty + warehouseOther + groupsQty + mineQty;
     return {
       product_id: String(r.product_id),
       product_name: String(r.product_name),
       unit: String(r.unit),
+      cylinder_rental_eligible: Boolean(s.cylinder_rental_eligible),
+      warehouse_full: warehouseFull,
+      warehouse_empty: warehouseEmpty,
+      warehouse_other: warehouseOther,
+      groups_qty: groupsQty,
+      mine_qty: mineQty,
       supplier_qty: supplierQty,
       system_qty: systemQty,
       difference: systemQty - supplierQty,
@@ -128,7 +147,7 @@ export async function getStocktakeRoundData() {
     WHERE r.status='closed'
     ORDER BY r.closed_at DESC LIMIT 10
   `;
-  const reconciliation = openRound ? await reconciliationNow() : [];
+  const reconciliation = await reconciliationNow();
   return { state, openRound: openRound ?? null, points, zones, countingItems, history, reconciliation };
 }
 
