@@ -495,3 +495,8 @@ Có cơ cấu chi phí, xu hướng, top loại khí, bảng tổng hợp theo l
 - Nhóm không xóa hẳn để giữ lịch sử phiếu, sổ tồn và Audit; Admin bấm "Ngừng sử dụng" tại Quản trị → Danh mục & số dư.
 - Chỉ ngừng được khi nhóm đã trả hết chai về Kho Hậu cần bằng phiếu Trả (Thủ kho xác nhận), không còn phiếu Đổi/Mượn/Trả dở dang và không còn tài khoản hoạt động. Nhóm Cối/Mỏ không được ngừng.
 - Nhóm "Nhà thầu" mẫu ban đầu được bỏ khỏi dữ liệu mẫu; nhà thầu mới thì Admin tự tạo nhóm và đặt tên.
+
+## Quản lý XSC · Workshop tạo phiếu cho Nhóm Workshop (V1.0.52)
+- Tài khoản Workshop quản lý toàn bộ các nhóm, đồng thời là Đốc công Nhóm Workshop: được tạo phiếu Đổi/Mượn/Trả, phiếu luôn thuộc Nhóm Workshop (không cần Admin gắn nhóm).
+- Workshop được tự duyệt Mượn trong giờ hành chính và tự hậu kiểm phiếu của mình; Trưởng kho vẫn duyệt được.
+- Đổi/Trả vẫn không vượt số chai Nhóm Workshop đang giữ.
