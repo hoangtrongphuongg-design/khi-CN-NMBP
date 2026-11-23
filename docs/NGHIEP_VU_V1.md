@@ -500,3 +500,6 @@ Có cơ cấu chi phí, xu hướng, top loại khí, bảng tổng hợp theo l
 - Tài khoản Workshop quản lý toàn bộ các nhóm, đồng thời là Đốc công Nhóm Workshop: được tạo phiếu Đổi/Mượn/Trả cho nhóm Admin gắn vào tài khoản (cùng nhóm với Đốc công Workshop); chưa gắn thì dùng nhóm mã WORKSHOP.
 - Workshop được tự duyệt Mượn trong giờ hành chính và tự hậu kiểm phiếu của mình; Trưởng kho vẫn duyệt được.
 - Đổi/Trả vẫn không vượt số chai Nhóm Workshop đang giữ.
+
+## Đối chiếu số vỏ trong Số chai & tồn kho (V1.0.53)
+- Bảng "Đối chiếu số vỏ: vận hành trên web ↔ NCC cho thuê" hiện ở cuối trang Số chai & tồn kho cho mọi vai trò có trang này (trừ NCC), chỉ xem; cùng số liệu với Quản trị → Kiểm kê & chốt.
