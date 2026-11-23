@@ -355,3 +355,8 @@ export async function closeStocktakeRound(profile: Profile, roundId: string, dis
       note: `Đóng đợt kiểm kê ${round.round_code}.` });
   });
 }
+
+/** Đối chiếu số vỏ vận hành trên web ↔ NCC cho thuê (chỉ đọc), dùng cho trang Số chai & tồn kho. */
+export async function getContainerReconciliation() {
+  return reconciliationNow();
+}

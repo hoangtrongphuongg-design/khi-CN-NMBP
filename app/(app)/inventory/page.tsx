@@ -6,6 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { requireProfile } from "@/lib/auth/session";
 import { getInventory } from "@/lib/services/inventory";
+import { getContainerReconciliation } from "@/lib/services/stocktake";
+import { ContainerReconciliationCard } from "@/components/container-reconciliation-card";
 import { sql } from "@/lib/db";
 import { formatNumber } from "@/lib/utils";
 import type { InventoryRow } from "@/types/app";
@@ -60,7 +62,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Se
   const tab = params.tab === "product" ? "product" : "location";
   const q = String(params.q || "").trim().toLowerCase();
   const product = String(params.product || "all");
-  const allRows = await getInventory();
+  const [allRows, reconciliation] = await Promise.all([getInventory(), getContainerReconciliation()]);
 
   const warehouseRows = allRows.filter((x) => x.point_kind === "warehouse");
   let groupRows = allRows.filter((x) => x.point_kind === "group");
@@ -200,5 +202,6 @@ export default async function InventoryPage({ searchParams }: { searchParams: Se
         return <article className="product-distribution-card" key={productItem.code}><div className="product-distribution-head"><div><span>{productShort(productItem.code)}</span><div><strong>{productItem.name}</strong><small>Tổng đang quản lý: {formatNumber(total)}</small></div></div></div><div className="product-location-list">{productItem.rows.sort((a,b)=>Number(b.total_qty)-Number(a.total_qty)).map((row) => <div className="product-location-row" key={`${productItem.code}-${row.point_code}`}><div className="product-location-name">{row.point_kind === "warehouse" ? <Warehouse size={15}/> : <UsersRound size={15}/>}<span>{row.point_name}</span></div><div className="product-location-track"><i style={{width:`${Math.max((Number(row.total_qty)/max)*100,8)}%`}}/></div><strong>{formatNumber(row.total_qty)}</strong></div>)}</div></article>;
       }) : <div className="inventory-empty">Chưa có dữ liệu phân bổ phù hợp bộ lọc.</div>}</div> : null}
     </Card>
+    <ContainerReconciliationCard rows={reconciliation}/>
   </div>;
 }
